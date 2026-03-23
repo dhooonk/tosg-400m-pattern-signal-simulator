@@ -1,0 +1,38 @@
+{
+  "TOSG-400M": {
+    "frequencies": [
+      60,
+      120,
+      240,
+      400
+    ],
+    "h_total": 1000,
+    "v_total": 1000
+  },
+  "TOSG-300M": {
+    "frequencies": [
+      60,
+      120,
+      240,
+      300
+    ],
+    "h_total": 1000,
+    "v_total": 1000
+  },
+  "TOSG-200M": {
+    "frequencies": [
+      60,
+      120,
+      200
+    ],
+    "h_total": 1000,
+    "v_total": 1000
+  },
+  "ㅎ": {
+    "frequencies": [
+      12
+    ],
+    "h_total": 1000,
+    "v_total": 1000
+  }
+}

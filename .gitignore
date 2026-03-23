@@ -1,0 +1,36 @@
+# Python 캐시
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# 가상 환경
+venv/
+.venv/
+env/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# 빌드/배포 산출물
+dist/
+build/
+*.spec
+*.exe
+
+# 아카이브
+*.zip
+
+# 에디터
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 데이터 (로컬 신호 저장파일 – 개인 설정)
+data/signal_data/
+
+# 중복 설정 파일 (루트)
+models_config.json

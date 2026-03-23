@@ -1,0 +1,64 @@
+{
+  "signals": [
+    {
+      "name": "Signal1",
+      "sig_type": "",
+      "sig_mode": 0,
+      "inversion": 0,
+      "v1": 10.0,
+      "v2": -10.0,
+      "v3": 20.0,
+      "v4": -20.0,
+      "delay": 4166.75,
+      "width": 8333.5,
+      "period": 16667.0,
+      "color": "#0000FF",
+      "visible": true
+    },
+    {
+      "name": "Signal1_Copy",
+      "sig_type": "",
+      "sig_mode": 0,
+      "inversion": 1,
+      "v1": 10.0,
+      "v2": -10.0,
+      "v3": 20.0,
+      "v4": -20.0,
+      "delay": 4166.75,
+      "width": 8333.5,
+      "period": 16667.0,
+      "color": "#0000FF",
+      "visible": true
+    },
+    {
+      "name": "Signal1_Copy_Copy",
+      "sig_type": "",
+      "sig_mode": 1,
+      "inversion": 0,
+      "v1": 10.0,
+      "v2": -10.0,
+      "v3": 20.0,
+      "v4": -20.0,
+      "delay": 4166.75,
+      "width": 8333.5,
+      "period": 16667.0,
+      "color": "#0000FF",
+      "visible": true
+    },
+    {
+      "name": "Signal1_Copy_Copy_Copy",
+      "sig_type": "",
+      "sig_mode": 1,
+      "inversion": 1,
+      "v1": 10.0,
+      "v2": -10.0,
+      "v3": 20.0,
+      "v4": -20.0,
+      "delay": 4166.75,
+      "width": 8333.5,
+      "period": 16667.0,
+      "color": "#0000FF",
+      "visible": true
+    }
+  ]
+}
