@@ -1,167 +1,171 @@
 """
-Excel PG Signal 파일 임포터
-사용자가 작성하는 PG Signal 엑셀 파일을 파싱하여 Signal 객체 리스트로 변환합니다.
+Excel PG Signal 임포터 v2 (피드백 6)
 
-엑셀 파일 구조:
-  1행  : 헤더 (열 이름)
-  A열  : NUM (S01~S32)
-  B열  : 신호 이름
-  C열  : SIG TYPE (0~6)
-  D열  : SIG MODE (0~4)
-  E열  : INVERSION (0/1)
-  F~I열: V1~V4 (V 단위)
-  J열  : DELAY (us)
-  K열  : PERIOD (us)
-  L열  : WIDTH (us)
-  M열  : LENGTH (us)
-  N열  : AREA (us)
+각 시트 = 1개 모델.
+전체 시트를 읽어 List[ModelData]로 반환합니다.
 
-  P2:Q4 영역:
-    P2='SyncData', Q2=SyncData 값 (us 단위, 엑셀에서 직접 입력)
-    P3='Frequency', Q3=주파수 (Hz)
-    P4='SyncCounter', Q4=카운터 값
+시트 양식:
+  A1=NUM, B1=NAME, ..., N1=AREA
+  A2~A37: S01~S36 신호 데이터
+  P2=SyncData(us), Q2=값
+  P3=Frequency(Hz), Q3=값
+  P4=SyncCounter,   Q4=값
+  
+  A39=구분자, A40=패턴헤더, A41~=패턴데이터
+  A열=PTN_NO, B열=NAME, C~F=R V1-V4, G~J=G V1-V4, K~N=B V1-V4, O~R=W V1-V4, S열=TYPE
 """
 
 import os
-from typing import List, Tuple, Optional, Dict
+from typing import List, Optional
 
 
-class ExcelImportResult:
-    """Excel 임포트 결과 컨테이너"""
-    def __init__(self):
-        self.signals: List[dict] = []   # Signal.from_dict() 용 딕셔너리 리스트
-        self.sync_data_us: float = 0.0   # 1프레임 길이 (us)
-        self.frequency_hz: float = 0.0   # 주파수 (Hz)
-        self.sync_counter: int = 0
-        self.model_name: str = ""
-        self.errors: List[str] = []      # 파싱 경고/오류 메시지
-
-
-def import_excel_pg_signals(filepath: str) -> ExcelImportResult:
+def import_excel_all_models(filepath: str) -> 'List':
     """
-    PG Signal 엑셀 파일을 읽어 ExcelImportResult 반환
+    Excel 파일 전체 시트를 읽어 ModelData 리스트 반환
     
     Args:
         filepath: .xlsx 파일 경로
         
     Returns:
-        ExcelImportResult: 파싱된 신호 데이터 및 동기화 정보
-        
-    Raises:
-        ImportError: openpyxl이 설치되지 않은 경우
-        FileNotFoundError: 파일이 없는 경우
+        List[ModelData]: 모든 시트에서 파싱된 모델 데이터
     """
     try:
         import openpyxl
     except ImportError:
-        raise ImportError("openpyxl 라이브러리가 필요합니다. 'pip install openpyxl'을 실행하세요.")
+        raise ImportError("openpyxl이 필요합니다.")
+
+    from model_store import ModelData
+    from signal_model import Signal
 
     if not os.path.exists(filepath):
         raise FileNotFoundError(f"파일을 찾을 수 없습니다: {filepath}")
 
-    result = ExcelImportResult()
-    result.model_name = os.path.splitext(os.path.basename(filepath))[0]
-
     wb = openpyxl.load_workbook(filepath, data_only=True)
-    ws = wb.active  # 첫 번째 시트 사용
+    result_models: List[ModelData] = []
 
-    # ── P/Q 영역: SyncData / Frequency / SyncCounter 읽기 ──────
-    try:
-        sync_val   = ws['Q2'].value
-        freq_val   = ws['Q3'].value
-        scntr_val  = ws['Q4'].value
-
-        if sync_val is not None:
-            result.sync_data_us = float(sync_val)
-        if freq_val is not None:
-            result.frequency_hz = float(freq_val)
-            # SyncData 가 없으면 주파수로 계산
-            if result.sync_data_us == 0.0 and result.frequency_hz > 0:
-                result.sync_data_us = 1_000_000.0 / result.frequency_hz
-        elif result.sync_data_us > 0:
-            result.frequency_hz = 1_000_000.0 / result.sync_data_us
-
-        if scntr_val is not None:
-            result.sync_counter = int(scntr_val)
-    except Exception as e:
-        result.errors.append(f"SyncData 읽기 실패: {e}")
-
-    # ── A~N열: 신호 데이터 읽기 (2행부터) ──────────────────────
-    # 색상 팔레트 (신호 번호 기반 순환)
     default_colors = [
         '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
         '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf',
         '#aec7e8', '#ffbb78', '#98df8a', '#ff9896', '#c5b0d5',
     ]
 
-    for row_idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
-        # A열 (index 0): NUM
-        if not row or row[0] is None:
-            continue   # 비어있는 행 건너뜀
+    for sheet_idx, ws in enumerate(wb.worksheets):
+        model_name  = ws.title
+        model_num   = f"{sheet_idx+1:03d}"
 
-        num_val = str(row[0]).strip()
-        if not num_val.startswith('S') and not num_val.startswith('s'):
-            continue   # S01~S32 형식이 아니면 건너뜀
+        # ── SyncData / Frequency 읽기 ─────────────────────────
+        def _safe_float(cell_val, default=0.0):
+            try: return float(cell_val) if cell_val is not None else default
+            except: return default
+        def _safe_int(cell_val, default=0):
+            try: return int(cell_val) if cell_val is not None else default
+            except: return default
 
-        # B열: 신호 이름
-        name_val = str(row[1]).strip() if len(row) > 1 and row[1] is not None else ""
-        if not name_val:
-            continue   # 신호 이름이 없으면 건너뜀
+        sync_data_us = _safe_float(ws['Q2'].value)
+        freq_hz      = _safe_float(ws['Q3'].value)
+        sync_cntr    = _safe_int(ws['Q4'].value)
 
-        def safe_int(val, default=0) -> int:
+        if freq_hz <= 0 and sync_data_us > 0:
+            freq_hz = 1_000_000.0 / sync_data_us
+        elif sync_data_us <= 0 and freq_hz > 0:
+            sync_data_us = 1_000_000.0 / freq_hz
+        if freq_hz <= 0:
+            freq_hz = 60.0
+        if sync_data_us <= 0:
+            sync_data_us = 1_000_000.0 / freq_hz
+
+        # ── 신호 데이터 (2~37행) ──────────────────────────────
+        signals: List[Signal] = []
+        for row_idx in range(2, 38):
+            row = ws[row_idx]
+            if not row or row[0].value is None:
+                continue
+            num_val = str(row[0].value).strip()
+            if not num_val.upper().startswith('S'):
+                continue
+            name_val = str(row[1].value).strip() if len(row) > 1 and row[1].value else ''
+            if not name_val:
+                continue
+
+            def col(i, dv=0.0):
+                v = row[i].value if len(row) > i else None
+                try: return float(v) if v is not None else dv
+                except: return dv
+            def icol(i, dv=0):
+                v = row[i].value if len(row) > i else None
+                try: return int(v) if v is not None else dv
+                except: return dv
+
             try:
-                return int(val) if val is not None else default
-            except (ValueError, TypeError):
-                return default
+                num_idx = int(num_val[1:]) - 1
+            except:
+                num_idx = row_idx - 2
+            color = default_colors[num_idx % len(default_colors)]
 
-        def safe_float(val, default=0.0) -> float:
-            try:
-                return float(val) if val is not None else default
-            except (ValueError, TypeError):
-                return default
-
-        sig_type  = safe_int(row[2] if len(row) > 2 else None,  0)
-        sig_mode  = safe_int(row[3] if len(row) > 3 else None,  0)
-        inversion = safe_int(row[4] if len(row) > 4 else None,  0)
-
-        v1 = safe_float(row[5]  if len(row) > 5  else None, 0.0)
-        v2 = safe_float(row[6]  if len(row) > 6  else None, 0.0)
-        v3 = safe_float(row[7]  if len(row) > 7  else None, 0.0)
-        v4 = safe_float(row[8]  if len(row) > 8  else None, 0.0)
-
-        delay  = safe_float(row[9]  if len(row) > 9  else None, 0.0)   # J열
-        period = safe_float(row[10] if len(row) > 10 else None, 0.0)   # K열
-        width  = safe_float(row[11] if len(row) > 11 else None, 0.0)   # L열
-        length = safe_float(row[12] if len(row) > 12 else None, 0.0)   # M열
-        area   = safe_float(row[13] if len(row) > 13 else None, 0.0)   # N열
-
-        # 색상: 번호에서 순환 선택
-        try:
-            num_idx = int(num_val[1:]) - 1  # S01→0
-        except ValueError:
-            num_idx = row_idx - 2
-        color = default_colors[num_idx % len(default_colors)]
-
-        sig_dict = {
-            'name': name_val,
-            'sig_type': str(sig_type),
-            'sig_mode': sig_mode,
-            'inversion': inversion,
-            'v1': v1,
-            'v2': v2,
-            'v3': v3,
-            'v4': v4,
-            'delay': delay,
-            'width': width,
-            'period': period,
-            'color': color,
-            'visible': True,
+            sig = Signal(
+                name       = name_val,
+                sig_type   = str(icol(2, 0)),
+                sig_mode   = icol(3, 0),
+                inversion  = icol(4, 0),
+                v1 = col(5), v2 = col(6), v3 = col(7), v4 = col(8),
+                delay  = col(9),
+                period = col(10),
+                width  = col(11),
+                color  = color,
+                visible= True,
+            )
             # 확장 필드
-            'num': num_val,
-            'length': length,
-            'area': area,
-        }
-        result.signals.append(sig_dict)
+            sig._num    = num_val
+            sig._length = col(12)
+            sig._area   = col(13)
+            signals.append(sig)
+
+        # ── 패턴 데이터 (40행 이후) ───────────────────────────
+        patterns = []
+        ptn_start_row = None
+        for row_idx in range(39, ws.max_row + 1):
+            cell_a = ws.cell(row_idx, 1).value
+            if cell_a is not None and str(cell_a).strip().startswith('==='):
+                ptn_start_row = row_idx + 2  # 헤더 행(+1) 다음 데이터행(+2)
+                break
+
+        if ptn_start_row:
+            for row_idx in range(ptn_start_row, ws.max_row + 1):
+                row_vals = [ws.cell(row_idx, c).value for c in range(1, 20)]
+                if row_vals[0] is None:
+                    continue
+                try:
+                    ptn_no = int(row_vals[0])
+                except:
+                    continue
+                ptn_name = str(row_vals[1]).strip() if row_vals[1] else f'PTN{ptn_no:02d}'
+
+                def pv(i):
+                    try: return float(row_vals[i]) if row_vals[i] is not None else 0.0
+                    except: return 0.0
+                def ptype():
+                    try: return int(row_vals[18]) if row_vals[18] is not None else 0
+                    except: return 0
+
+                patterns.append({
+                    'ptn_no': ptn_no, 'name': ptn_name,
+                    'r_v1': pv(2), 'r_v2': pv(3), 'r_v3': pv(4), 'r_v4': pv(5),
+                    'g_v1': pv(6), 'g_v2': pv(7), 'g_v3': pv(8), 'g_v4': pv(9),
+                    'b_v1': pv(10), 'b_v2': pv(11), 'b_v3': pv(12), 'b_v4': pv(13),
+                    'w_v1': pv(14), 'w_v2': pv(15), 'w_v3': pv(16), 'w_v4': pv(17),
+                    'ptn_type': ptype(),
+                })
+
+        model = ModelData(
+            model_num    = model_num,
+            name         = model_name,
+            frequency_hz = freq_hz,
+            sync_data_us = sync_data_us,
+            sync_cntr    = sync_cntr,
+            signals      = signals,
+            patterns     = patterns,
+        )
+        result_models.append(model)
 
     wb.close()
-    return result
+    return result_models

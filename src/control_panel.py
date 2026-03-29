@@ -28,25 +28,27 @@ class ControlPanel(tk.Frame):
     """
     
     def __init__(self, parent, sync_data_manager, timing_viewer, signal_manager, signal_storage,
-                 pattern_data_panel=None):
+                 pattern_data_panel=None, model_store=None):
         """
         초기화 메서드
         
         Args:
             parent: 부모 위젯
             sync_data_manager: SyncData 관리자
-            timing_viewer: 타이밍 뷰어 (그래프 업데이트용)
+            timing_viewer: 타이밍 뷰어
             signal_manager: 신호 관리자
-            signal_storage: 신호 저장소
-            pattern_data_panel: PatternDataPanel 참조 (OTD 로드 시 패턴 데이터 연동)
+            signal_storage: 신호 저장소 (미사용 - 통하여 제거됨)
+            pattern_data_panel: PatternDataPanel 참조
+            model_store: ModelStore 인스턴스 (다중 모델 관리)
         """
         super().__init__(parent, bg='#e0e0e0')
         
         self.sync_data_manager = sync_data_manager
-        self.timing_viewer = timing_viewer
-        self.signal_manager = signal_manager
-        self.signal_storage = signal_storage
-        self.pattern_data_panel = pattern_data_panel  # 패턴 데이터 패널 참조
+        self.timing_viewer     = timing_viewer
+        self.signal_manager    = signal_manager
+        self.signal_storage    = signal_storage
+        self.pattern_data_panel = pattern_data_panel
+        self.model_store       = model_store  # 다중 모델 저장소
         
         self._setup_ui()
         self._update_sync_data_display()
@@ -178,18 +180,6 @@ class ControlPanel(tk.Frame):
         self.legend_combo.pack(pady=2, fill=tk.X)
         self.legend_combo.bind('<<ComboboxSelected>>', self._on_legend_location_changed)
         
-        # 데이터 관리 (저장/불러오기)
-        save_load_frame = tk.LabelFrame(self, text="JSON 저장/로드", font=('Arial', 10, 'bold'),
-                                       padx=6, pady=6, bg='#e0e0e0', fg='#000')
-        save_load_frame.pack(side=tk.LEFT, fill=tk.BOTH, padx=5, pady=5)
-        
-        btn_kw = dict(font=('Arial', 8), relief=tk.RAISED, borderwidth=2, width=13)
-        # 기존 JSON 저장/불러오기
-        tk.Button(save_load_frame, text="JSON 저장", command=self._on_save,
-                 bg='#4CAF50', fg='black', **btn_kw).pack(pady=2)
-        tk.Button(save_load_frame, text="JSON 불러오기", command=self._on_load,
-                 bg='#2196F3', fg='black', **btn_kw).pack(pady=2)
-
         # OTD / Excel 관련 프레임
         otd_frame = tk.LabelFrame(self, text="OTD / Excel", font=('Arial', 10, 'bold'),
                                   padx=6, pady=6, bg='#e0e0e0', fg='#000')
@@ -208,6 +198,7 @@ class ControlPanel(tk.Frame):
                  bg='#607D8B', fg='black', **btn_kw2).pack(pady=2)
         tk.Button(otd_frame, text="Excel 데이터 출력", command=self._on_export_excel,
                  bg='#00BCD4', fg='black', **btn_kw2).pack(pady=2)
+
     
     def _update_frequency_list(self):
         """현재 선택된 모델에 맞는 주파수 목록 업데이트"""

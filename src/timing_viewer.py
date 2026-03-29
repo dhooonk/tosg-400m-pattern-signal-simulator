@@ -220,8 +220,10 @@ class TimingViewer(tk.Frame):
             color = getattr(signal, 'color', 'blue')
             if not color: color = 'blue'
             
-            # 파형 그리기
-            self.ax.plot(time, voltage + offset, color=color, linewidth=1.5, label=signal.name)
+            # 파형 그리기 (구형파: steps-post)
+            self.ax.plot(time, voltage + offset, color=color,
+                         linewidth=1.5, label=signal.name,
+                         drawstyle='steps-post')
             
             # 신호 영역 배경 (구분감)
             bg_bottom = current_y_cursor - (margin / 4)
@@ -274,7 +276,9 @@ class TimingViewer(tk.Frame):
             # 신호 색상 가져오기
             color = getattr(signal, 'color', None)
             
-            self.ax.plot(time, voltage, linewidth=1.5, label=signal.name, color=color)
+            self.ax.plot(time, voltage, linewidth=1.5, label=signal.name, color=color,
+                         drawstyle='steps-post')
+
             
             # 전체 전압 범위 갱신
             v_min = min(signal.v1, signal.v2, signal.v3, signal.v4)
