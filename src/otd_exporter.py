@@ -1,34 +1,52 @@
 """
-OTD 파일 내보내기 모듈 v2 (피드백 8)
+OTD 파일 내보내기 모듈
 
 ModelStore의 전체 모델 데이터를 OTD 파일로 저장합니다.
 MULTIREMOTE 섹션도 포함합니다.
 
-OTD 포맷:
-  HEADER (1000번대) → 2줄 공백
-  MODEL 블록 (100/200/400번대) → 999=END-MODEL_XXX → 3줄 공백
-  GLOBAL_MRT (52=)
-  MULTIREMOTE (500/600번대)
-  9999=END
+OTD 포맷 구조:
+  [HEADER]          ← 전체 파일 헤더 섹션 태그
+  1001~1011번대     ← 장비 기본 정보
+
+  [MODEL_XXX]       ← 모델 섹션 태그 (XXX = 모델 번호)
+  101=MODEL,...     ← 모델 정보
+  [SIGNAL_DATA_XXX] ← 신호 데이터 섹션 태그
+  201~299           ← 신호 파라미터
+  [PATTERN_DATA_XXX]← 패턴 데이터 섹션 태그
+  401~499           ← 패턴 전압 데이터
+  999=END-MODEL_XXX ← 모델 종료
+
+  [GLOBAL_MRT]      ← 멀티 리모트 그룹 목록
+  52=GLOBAL_MRT,...
+
+  [MULTIREMOTE_XXX] ← 멀티 리모트 블록 태그
+  501=MRT,...
+  6XX=MRT...
+
+  9999=END          ← 전체 파일 종료
 """
 
 from typing import List, Dict, Optional
 
 
 def _v_to_mv(v: float) -> int:
+    """전압(V) → 밀리볼트(mV) 정수 변환"""
     return int(round(v * 1000))
 
 
 def _us_to_tenth_us(us: float) -> int:
+    """마이크로초(us) → 1/10us 정수 변환 (OTD 내부 단위)"""
     return int(round(us * 10))
 
 
 def _hz_to_sync_data_raw(hz: float) -> int:
+    """주파수(Hz) → SYNCDATA raw 값 변환 (단위: 1/10us)"""
     if hz <= 0:
         return 0
     return int(round(10_000_000.0 / hz))
 
 
+# OTD 파일 헤더 기본값
 DEFAULT_HEADER = {
     'device': 'LCD SHORTING BAR',
     'name': 'TOSG-400M',
@@ -45,20 +63,31 @@ DEFAULT_HEADER = {
 
 
 class OtdExporter:
-    """OTD 파일 생성기"""
+    """
+    OTD 파일 생성기
+
+    주요 메서드:
+      - export_from_model_store(): ModelStore 인스턴스에서 직접 내보내기
+      - export(): 딕셔너리 리스트 기반 내보내기 (범용)
+      - export_format_file(): 빈 OTD 포맷 파일 생성 (사용 안 함→제거)
+    """
 
     def export_from_model_store(self, filepath: str, model_store,
                                  header: Optional[Dict] = None) -> bool:
         """
         ModelStore의 전체 데이터를 OTD 파일로 저장
-        
+
         Args:
             filepath: 저장 경로
             model_store: ModelStore 인스턴스
-            header: 헤더 오버라이드 딕셔너리
+            header: 헤더 오버라이드 딕셔너리 (None이면 기본값 사용)
+
+        Returns:
+            bool: 성공 여부
         """
         models_data = []
         for md in model_store.models:
+            # Signal 객체면 to_dict()로 변환, 이미 dict면 그대로 사용
             signals = [s.to_dict() if hasattr(s, 'to_dict') else s
                        for s in md.signals]
             models_data.append({
@@ -80,34 +109,45 @@ class OtdExporter:
         """
         OTD 파일 저장
 
+        주어진 모델 데이터 리스트를 OTD 포맷으로 파일에 씁니다.
+        각 섹션에 [HEADER], [MODEL_XXX], [SIGNAL_DATA_XXX], [PATTERN_DATA_XXX]
+        태그를 삽입합니다.
+
         Args:
             filepath: 저장할 파일 경로
-            models: 모델 데이터 리스트
-            header: 헤더 오버라이드
-            multiremote_groups: List[MultiRemoteGroup]
+            models: 모델 데이터 딕셔너리 리스트
+                    각 항목: {model_num, name, frequency_hz, sync_data_us,
+                              sync_cntr, signals, patterns}
+            header: 헤더 오버라이드 딕셔너리
+            multiremote_groups: List[MultiRemoteGroup] (OTD MULTIREMOTE 섹션)
+
+        Returns:
+            bool: 성공이면 True, 실패이면 False
         """
         try:
             lines = []
             hdr = {**DEFAULT_HEADER, **(header or {})}
 
-            # ── HEADER ────────────────────────────────────────
+            # ── [HEADER] 섹션 ────────────────────────────────────
             hdr_num = str(len(models)) if models else '1'
             lines += [
+                '[HEADER]',
                 f"1001=DEVICE,{hdr['device']}",
                 f"1002=NAME,{hdr['name']}",
-                f"1003=PG_VERSION.{hdr['pg_version']}",
+                f"1003=PG_VERSION,{hdr['pg_version']}",
                 f"1004=FEATURE,{hdr['feature']}",
                 f"1005=FILESYSTEM,{hdr['filesystem']}",
                 f"1006=COMPATIBILITY,{hdr['compatibility']}",
                 f"1007=FILETYPE,{hdr['filetype']}",
                 f"1008=OPTION1,{hdr['option1']}",
                 f"1009=OPTION2,{hdr['option2']}",
-                f"1010=CURRENT.MODEL_NUMBER,{hdr_num}",
+                # 피드백 6번: CURRENT.MODEL_NUMBER → CURRENT_MODEL_NUMBER
+                f"1010=CURRENT_MODEL_NUMBER,{hdr_num}",
                 f"1011=CURRENT_GROUP NUMBER,{hdr['group_number']}",
                 "", "",
             ]
 
-            # ── MODEL 블록들 ──────────────────────────────────
+            # ── MODEL 블록들 ──────────────────────────────────────
             for model_idx, model in enumerate(models):
                 model_num  = str(model.get('model_num', f'{model_idx+1:03d}'))
                 model_name = model.get('name', f'Model-{model_num}')
@@ -117,13 +157,15 @@ class OtdExporter:
                 signals    = model.get('signals', [])
                 patterns   = model.get('patterns', [])
 
-                # SYNCDATA: sync_data_us가 있으면 직접 사용, 없으면 Hz로 계산
+                # SYNCDATA raw 계산: sync_data_us가 있으면 직접, 없으면 Hz에서 계산
                 if sync_data_us > 0:
                     sync_raw = _us_to_tenth_us(sync_data_us)
                 else:
                     sync_raw = _hz_to_sync_data_raw(freq_hz)
 
+                # 피드백 5번: [MODEL_XXX] 섹션 태그 삽입
                 lines += [
+                    f'[MODEL_{model_num}]',
                     f"101=MODEL,{model_num}",
                     f"102=NAME,{model_name}",
                     f"103=SYNCDATA,{sync_raw}",
@@ -131,10 +173,14 @@ class OtdExporter:
                     "",
                 ]
 
+                # 피드백 5번: [SIGNAL_DATA_XXX] 섹션 태그 삽입
+                lines.append(f'[SIGNAL_DATA_{model_num}]')
                 for sig_idx, sig in enumerate(signals, 1):
                     lines.append(self._format_signal_line(sig_idx, sig))
                 lines.append("")
 
+                # 피드백 5번: [PATTERN_DATA_XXX] 섹션 태그 삽입
+                lines.append(f'[PATTERN_DATA_{model_num}]')
                 for ptn_idx, ptn in enumerate(patterns, 1):
                     lines.append(self._format_pattern_line(ptn_idx, ptn))
                 lines.append("")
@@ -143,16 +189,18 @@ class OtdExporter:
                 if model_idx < len(models) - 1:
                     lines += ["", "", ""]
 
-            # ── GLOBAL_MRT ────────────────────────────────────
+            # ── GLOBAL_MRT 섹션 ──────────────────────────────────
             if multiremote_groups:
                 lines += ["", ""]
-                # 52= 라인
+                lines.append('[GLOBAL_MRT]')
+                # 52= 라인: 전체 MRT 그룹 목록 선언
                 for grp in multiremote_groups:
                     lines.append(f"52=GLOBAL_MRT,{grp.mrt_no},{grp.name}")
                 lines += ["", ""]
 
-                # MULTIREMOTE 블록
+                # MULTIREMOTE 블록: 각 그룹의 구동 순서 정의
                 for grp in multiremote_groups:
+                    lines.append(f'[MULTIREMOTE_{grp.mrt_no}]')
                     lines.append(f"501=MRT,{grp.mrt_no},{grp.name}")
                     for entry in grp.entries:
                         lines.append(
@@ -161,7 +209,7 @@ class OtdExporter:
                         )
                     lines.append("")
 
-            # ── 종료 ─────────────────────────────────────────
+            # ── 전체 종료 ─────────────────────────────────────────
             lines += ["", "9999=END"]
 
             with open(filepath, 'w', encoding='utf-8', newline='\r\n') as f:
@@ -174,6 +222,19 @@ class OtdExporter:
             return False
 
     def _format_signal_line(self, idx: int, sig: dict) -> str:
+        """
+        신호 딕셔너리를 OTD SIGNAL_DATA 라인 형식으로 변환
+
+        OTD 포맷: 2XX-SYY=NUM,NAME,V1,V2,V3,V4,DELAY,WIDTH,PERIOD,LENGTH,AREA,MF,MOD,INV,TYPE
+        단위 변환: 전압 V→mV, 시간 us→1/10us
+
+        Args:
+            idx: 신호 순서 번호 (1부터)
+            sig: 신호 데이터 딕셔너리
+
+        Returns:
+            str: OTD 포맷 라인 문자열
+        """
         num_str = sig.get('num', f'S{idx:02d}')
         name    = sig.get('name', f'Signal{idx}')
         v1 = _v_to_mv(float(sig.get('v1', 0)))
@@ -190,21 +251,38 @@ class OtdExporter:
         inv = sig.get('inversion', 0)
         try:
             sig_type = int(sig.get('sig_type', '0'))
-        except:
+        except (ValueError, TypeError):
             sig_type = 0
         line_key = f"2{idx:02d}-{num_str}"
-        return (f"{line_key},{name},{v1},{v2},{v3},{v4},"
+        return (f"{line_key}={name},{v1},{v2},{v3},{v4},"
                 f"{delay},{width},{period},{length},{area},"
                 f"{mf},{mod},{inv},{sig_type}")
 
     def _format_pattern_line(self, idx: int, ptn: dict) -> str:
+        """
+        패턴 딕셔너리를 OTD PATTERN_DATA 라인 형식으로 변환
+
+        OTD 포맷: 4XX=PTNXX,NAME,R_V1..V4,G_V1..V4,B_V1..V4,W_V1..V4,TYPE
+        단위 변환: 전압 V→mV
+
+        Args:
+            idx: 패턴 순서 번호 (1부터)
+            ptn: 패턴 데이터 딕셔너리
+
+        Returns:
+            str: OTD 포맷 라인 문자열
+        """
         ptn_num  = ptn.get('ptn_no', idx)
         ptn_name = ptn.get('name', f'PTN{ptn_num:02d}')
-        def mv(k): return _v_to_mv(float(ptn.get(k, 0)))
-        r1,r2,r3,r4 = mv('r_v1'),mv('r_v2'),mv('r_v3'),mv('r_v4')
-        g1,g2,g3,g4 = mv('g_v1'),mv('g_v2'),mv('g_v3'),mv('g_v4')
-        b1,b2,b3,b4 = mv('b_v1'),mv('b_v2'),mv('b_v3'),mv('b_v4')
-        w1,w2,w3,w4 = mv('w_v1'),mv('w_v2'),mv('w_v3'),mv('w_v4')
+
+        def mv(k):
+            """딕셔너리 값을 mV 정수로 변환"""
+            return _v_to_mv(float(ptn.get(k, 0)))
+
+        r1, r2, r3, r4 = mv('r_v1'), mv('r_v2'), mv('r_v3'), mv('r_v4')
+        g1, g2, g3, g4 = mv('g_v1'), mv('g_v2'), mv('g_v3'), mv('g_v4')
+        b1, b2, b3, b4 = mv('b_v1'), mv('b_v2'), mv('b_v3'), mv('b_v4')
+        w1, w2, w3, w4 = mv('w_v1'), mv('w_v2'), mv('w_v3'), mv('w_v4')
         ptn_type = ptn.get('ptn_type', 0)
         line_key = f"4{idx:02d}=PTN{ptn_num:02d}"
         return (f"{line_key},{ptn_name},"

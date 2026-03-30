@@ -1,8 +1,18 @@
 """
 모델 목록 패널 (ModelListPanel)
 
-로드된 전체 모델을 Listbox로 표시하고,
-클릭하면 SignalManager와 PatternDataPanel을 해당 모델 데이터로 업데이트합니다.
+로드된 전체 모델 목록을 Listbox로 표시합니다.
+사용자가 모델을 클릭하면 해당 모델의 신호/패턴 데이터를 UI에 반영합니다.
+
+연동 컴포넌트:
+  - SignalManager: 선택 모델의 신호로 교체
+  - PatternDataPanel: 선택 모델의 패턴으로 교체
+  - SyncDataManager: 선택 모델의 주파수/SyncData로 업데이트
+  - TimingViewer: 파형 다이어그램 갱신
+
+피드백 2번:
+  OTD 불러오기 후 팝업 없이 이 패널에 전체 모델이 표시되며,
+  클릭 시 해당 모델의 신호/패턴/MULTIREMOTE가 자동 표시됩니다.
 """
 
 import tkinter as tk
@@ -13,17 +23,33 @@ class ModelListPanel(tk.Frame):
     """
     좌측 모델 선택 패널
 
-    ModelStore에서 모델 목록을 가져와 리스트박스로 표시.
-    선택 시:
-      - signal_manager 의 신호를 해당 모델 신호로 교체
-      - pattern_data_panel 의 패턴을 해당 모델 패턴으로 교체
-      - sync_data_manager 를 해당 모델 주파수/SyncData 로 업데이트
-      - timing_viewer 업데이트
+    ModelStore에서 모델 목록을 가져와 Listbox로 표시하고,
+    클릭 시 관련 UI 컴포넌트를 해당 모델 데이터로 갱신합니다.
+
+    Attributes:
+        model_store: ModelStore 인스턴스
+        signal_manager: SignalManager 인스턴스
+        sync_data_manager: SyncDataManager 인스턴스
+        timing_viewer: TimingViewer 인스턴스 (지연 연결)
+        pattern_data_panel: PatternDataPanel 인스턴스 (지연 연결)
+        _listbox: 모델 목록 Listbox 위젯
+        _count_var: 모델 수 표시 StringVar
     """
 
     def __init__(self, parent, model_store, signal_manager,
                  sync_data_manager, timing_viewer=None,
                  pattern_data_panel=None):
+        """
+        초기화 메서드
+
+        Args:
+            parent: 부모 위젯
+            model_store: ModelStore 인스턴스
+            signal_manager: SignalManager 인스턴스
+            sync_data_manager: SyncDataManager 인스턴스
+            timing_viewer: TimingViewer (나중에 연결 가능)
+            pattern_data_panel: PatternDataPanel (나중에 연결 가능)
+        """
         super().__init__(parent, bg='#e8e8e8')
         self.model_store       = model_store
         self.signal_manager    = signal_manager
@@ -32,48 +58,68 @@ class ModelListPanel(tk.Frame):
         self.pattern_data_panel = pattern_data_panel
 
         self._setup_ui()
+        # ModelStore 변경 시 자동 갱신 등록
         self.model_store.add_listener(self._refresh)
 
-    # ──────────────────────────────────────────────────────────
+    # ──────────────────────────────────────────────────────────────
+    # UI 구성
+    # ──────────────────────────────────────────────────────────────
+
     def _setup_ui(self):
-        header = tk.Label(self, text="MODEL LIST",
-                          font=('Arial', 10, 'bold'),
-                          bg='#2c3e50', fg='white',
-                          pady=6)
+        """Listbox + 스크롤바 UI 구성"""
+        # 헤더 레이블
+        header = tk.Label(
+            self, text="MODEL LIST",
+            font=('Arial', 10, 'bold'),
+            bg='#2c3e50', fg='white', pady=6
+        )
         header.pack(side=tk.TOP, fill=tk.X)
 
+        # Listbox 프레임
         listframe = tk.Frame(self, bg='#e8e8e8')
         listframe.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=4, pady=4)
 
-        self._listbox = tk.Listbox(listframe,
-                                   font=('Consolas', 9),
-                                   bg='#ffffff', fg='#1a1a1a',
-                                   selectbackground='#2980b9',
-                                   selectforeground='white',
-                                   activestyle='none',
-                                   height=20)
+        self._listbox = tk.Listbox(
+            listframe,
+            font=('Consolas', 9),
+            bg='#ffffff', fg='#1a1a1a',
+            selectbackground='#2980b9',
+            selectforeground='white',
+            activestyle='none',
+            height=20
+        )
         vsb = ttk.Scrollbar(listframe, orient='vertical',
                              command=self._listbox.yview)
         self._listbox.configure(yscrollcommand=vsb.set)
         self._listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
 
+        # 클릭 이벤트: 모델 선택
         self._listbox.bind('<<ListboxSelect>>', self._on_select)
 
-        # 하단 카운트 표시
+        # 하단 모델 수 표시
         self._count_var = tk.StringVar(value="모델 없음")
-        tk.Label(self, textvariable=self._count_var,
-                 font=('Arial', 8), bg='#e8e8e8', fg='#555').pack(
-            side=tk.BOTTOM, pady=2)
+        tk.Label(
+            self, textvariable=self._count_var,
+            font=('Arial', 8), bg='#e8e8e8', fg='#555'
+        ).pack(side=tk.BOTTOM, pady=2)
 
-    # ──────────────────────────────────────────────────────────
+    # ──────────────────────────────────────────────────────────────
+    # ModelStore 갱신 콜백
+    # ──────────────────────────────────────────────────────────────
+
     def _refresh(self):
-        """ModelStore 변경 시 리스트 갱신"""
+        """
+        ModelStore 변경 시 Listbox 갱신
+
+        모델 목록을 다시 그리고, 현재 선택 모델을 복원합니다.
+        OTD/Excel 불러오기 후 자동 호출됩니다.
+        """
         self._listbox.delete(0, tk.END)
         for m in self.model_store.models:
             self._listbox.insert(tk.END, m.display_name)
 
-        # 현재 선택 복원
+        # 현재 선택 인덱스 복원
         idx = self.model_store.current_index
         if 0 <= idx < len(self.model_store.models):
             self._listbox.selection_set(idx)
@@ -82,16 +128,40 @@ class ModelListPanel(tk.Frame):
         count = len(self.model_store.models)
         self._count_var.set(f"총 {count}개 모델" if count else "모델 없음")
 
+        # 첫 번째 모델을 자동으로 선택하여 내용 표시
+        if count > 0 and self.model_store.current_index >= 0:
+            self._load_model(self.model_store.current_index)
+
+    # ──────────────────────────────────────────────────────────────
+    # 모델 선택 핸들러
+    # ──────────────────────────────────────────────────────────────
+
     def _on_select(self, event=None):
-        """모델 선택 시 UI 컴포넌트 업데이트"""
+        """
+        모델 클릭 이벤트: 선택된 모델 데이터로 UI 갱신
+
+        피드백 2번: 클릭 시 해당 모델의 신호/패턴/타이밍 정보를 표시
+        """
         sel = self._listbox.curselection()
         if not sel:
             return
-        idx = sel[0]
-        model = self.model_store.models[idx]
-        self.model_store._current_idx = idx  # notify 없이 인덱스만 업데이트
+        self._load_model(sel[0])
 
-        # ── 신호 업데이트 ────────────────────────────────────
+    def _load_model(self, idx: int):
+        """
+        지정 인덱스의 모델 데이터를 UI에 반영
+
+        Args:
+            idx: ModelStore.models의 인덱스
+        """
+        if not (0 <= idx < len(self.model_store.models)):
+            return
+
+        model = self.model_store.models[idx]
+        # ModelStore의 현재 인덱스만 업데이트 (notify 없이)
+        self.model_store._current_idx = idx
+
+        # ── 신호 목록 갱신 ────────────────────────────────────────
         from signal_model import Signal
         self.signal_manager.clear_signals()
         for sig in model.signals:
@@ -100,22 +170,26 @@ class ModelListPanel(tk.Frame):
             elif isinstance(sig, dict):
                 self.signal_manager.add_signal(Signal.from_dict(sig))
 
-        # ── 패턴 업데이트 ────────────────────────────────────
+        # ── 패턴 데이터 갱신 ──────────────────────────────────────
         if self.pattern_data_panel is not None:
             self.pattern_data_panel.set_patterns(model.patterns)
 
-        # ── SyncData 업데이트 ────────────────────────────────
+        # ── SyncData / 주파수 갱신 ────────────────────────────────
         self.sync_data_manager._update_from_otd(
-            model.model_num, model.name,
-            int(round(model.frequency_hz)), model.sync_data_us
+            model.model_num,
+            model.name,
+            int(round(model.frequency_hz)),
+            model.sync_data_us
         )
 
-        # ── 타이밍 뷰어 업데이트 ────────────────────────────
+        # ── 타이밍 다이어그램 갱신 ────────────────────────────────
         if self.timing_viewer:
             self.timing_viewer.update_plot()
 
     def set_timing_viewer(self, tv):
+        """타이밍 뷰어 참조 업데이트"""
         self.timing_viewer = tv
 
     def set_pattern_panel(self, pp):
+        """패턴 데이터 패널 참조 업데이트"""
         self.pattern_data_panel = pp
