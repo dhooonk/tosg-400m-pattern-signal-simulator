@@ -1,45 +1,51 @@
 """
-Excel 파형 시각화 내보내기 v2 (피드백 9-12)
+Excel 파형 시각화 내보내기
 
-개선 사항:
-  - 신호 간 2행 여백 (피드백 9)
-  - 0V=가운데 행, >0V=위쪽 행, <0V=아래쪽 행 테두리 (피드백 10)
-  - 구간 경계: 점선, 파형: 실선 (피드백 12)
-  - Delay/Width/Period 화살표 도형 + 텍스트박스 (피드백 11)
+신호 파라미터를 Excel 셀 테두리로 파형을 시각화하고,
+각 신호의 전압 전환(rising/falling edge) 구간 위에
+↔ 기호와 timing 텍스트를 표시합니다.
+
+출력 레이아웃:
+  1행 : 구간 라벨 (Seg1, Seg2, ...)
+  2행 이후 : 신호별 블록 (3행+여백행 반복)
+             ├ H행 (High)  : 양전압 파형 상단 테두리
+             ├ M행 (Mid)   : 0V 파형 테두리
+             └ L행 (Low)   : 음전압 파형 하단 테두리
+  각 신호 파형 위(H행 바로 위)에 timing 텍스트 표시
 """
 
-from typing import List, Dict, Tuple
+import re
+from typing import List, Dict, Tuple, Optional
 
 
 # ────────────────────────────────────────────────────────────────
 # 레이아웃 상수
 # ────────────────────────────────────────────────────────────────
 
-ZOOM_PERCENT     = 25
+ZOOM_PERCENT     = 25       # 시트 기본 줌 배율 (%)
 
-COL_NUM          = 1   # A: 신호 NUM
-COL_NAME         = 2   # B: 신호 이름
-COL_WAVE_START   = 3   # C 이후: 파형 셀
+COL_NUM          = 1        # A열: 신호 NUM
+COL_NAME         = 2        # B열: 신호 이름
+COL_WAVE_START   = 3        # C열 이후: 파형 셀 영역
 
-ROW_LABEL        = 1   # 구간 라벨 행
-ROW_TIME_ARROW   = 2   # 시간 표시 행 (텍스트 반환 후 도형 사용)
-ROW_WAVE_START   = 3   # 첫 신호 시작
+ROW_LABEL        = 1        # 1행: 구간 라벨 (Seg1, Seg2, ...)
+ROW_WAVE_START   = 2        # 2행부터 신호 파형 시작
 
-CELLS_PER_SIGNAL = 3   # 신호당 행: 위(H), 중(M), 아래(L)
-SIGNAL_GAP_ROWS  = 2   # 신호 간 여백 행 수
+CELLS_PER_SIGNAL = 3        # 신호당 행 수: H행(위), M행(가운데), L행(아래)
+SIGNAL_GAP_ROWS  = 2        # 신호 간 여백 행 수
 
-NAME_COL_WIDTH   = 18.0
-NUM_COL_WIDTH    = 7.0
-WAVE_COL_WIDTH   = 2.5
+NAME_COL_WIDTH   = 18.0     # 신호 이름 열 너비
+NUM_COL_WIDTH    = 7.0      # 신호 번호 열 너비
+WAVE_COL_WIDTH   = 2.5      # 파형 셀 열 너비
 
-LABEL_COLOR      = 'FFD0D8E8'
-WAVE_COLOR_POS   = 'FF2C3E50'   # >0V
-WAVE_COLOR_ZERO  = 'FF27AE60'   # 0V
-WAVE_COLOR_NEG   = 'FFE74C3C'   # <0V
+LABEL_COLOR      = 'FFD0D8E8'   # 구간 라벨 배경색 (연파랑)
+WAVE_COLOR_POS   = 'FF2C3E50'   # >0V 파형 색
+WAVE_COLOR_ZERO  = 'FF27AE60'   # 0V 파형 색
+WAVE_COLOR_NEG   = 'FFE74C3C'   # <0V 파형 색
 
 FONT_LABEL       = 9
 FONT_VOLTAGE     = 7
-FONT_ARROW       = 8
+FONT_TIMING      = 7        # timing 텍스트 폰트 크기
 FONT_NAME        = 10
 
 
@@ -49,7 +55,21 @@ FONT_NAME        = 10
 
 def _compute_segments(sync_data_us: float, signals: List[Dict],
                       max_segs: int = 32) -> List[Tuple[float, float, str]]:
-    """신호 타이밍 경계점 기반 구간 분할"""
+    """
+    신호 타이밍 경계점 기반 구간 분할
+
+    모든 신호의 delay, width, period 경계점을 수집하여 구간을 나눕니다.
+    구간이 max_segs를 초과하면 가장 짧은 인접 구간을 병합합니다.
+
+    Args:
+        sync_data_us: 1프레임 길이 (us)
+        signals: 신호 딕셔너리 리스트
+        max_segs: 최대 구간 수 (기본 32)
+
+    Returns:
+        List[(start_us, end_us, label_str)]
+    """
+    # 항상 0과 sync_data_us를 경계점으로 포함
     breakpoints = {0.0, sync_data_us}
     for sig in signals:
         delay  = float(sig.get('delay',  0))
@@ -63,7 +83,7 @@ def _compute_segments(sync_data_us: float, signals: List[Dict],
     sorted_bps = sorted(breakpoints)
     raw = list(zip(sorted_bps[:-1], sorted_bps[1:]))
 
-    # 최대 구간 수 제한: 가장 짧은 인접 구간 병합
+    # 최대 구간 수 초과 시 가장 짧은 구간을 이웃과 병합
     while len(raw) > max_segs:
         durs = [e - s for s, e in raw]
         idx  = durs.index(min(durs))
@@ -78,23 +98,71 @@ def _compute_segments(sync_data_us: float, signals: List[Dict],
 
 
 def _get_level(sig: Dict, t_us: float) -> float:
-    """시간 t_us 에서 신호 전압값 반환 (V)"""
+    """
+    시간 t_us에서 신호의 전압값(V) 반환
+
+    DC 모드 (delay=width=period=0): 항상 V1 출력
+    일반 모드: delay~delay+width 구간에서 V2, 그 외 V1
+
+    Args:
+        sig: 신호 딕셔너리
+        t_us: 시간 (us)
+
+    Returns:
+        float: 전압값 (V)
+    """
     v1 = float(sig.get('v1', 0))
     v2 = float(sig.get('v2', v1))
     delay  = float(sig.get('delay',  0))
     width  = float(sig.get('width',  0))
     period = float(sig.get('period', 0))
 
+    # DC 모드: 타이밍 파라미터 없음
     if delay == 0 and width == 0 and period == 0:
         return v1
 
     if period > 0:
+        # 주기 신호: 모듈로 연산으로 위상 계산
         phase = t_us % period
         in_pulse = (delay <= phase < delay + width)
     else:
+        # 단발 신호: 한 번만 펄스 발생
         in_pulse = (delay <= t_us < delay + width)
 
     return v2 if in_pulse else v1
+
+
+def _format_us(us: float) -> str:
+    """
+    시간값을 가독성 좋은 문자열로 변환
+
+    Args:
+        us: 시간 (us)
+
+    Returns:
+        str: '1.5ms', '21.0us', '500ns' 등
+    """
+    if us >= 1000:
+        return f"{us / 1000:.2f}ms"
+    elif us >= 1:
+        return f"{us:.1f}us"
+    else:
+        return f"{us * 1000:.0f}ns"
+
+
+def _sig_base_row(sig_idx: int) -> int:
+    """
+    신호 인덱스를 파형 시작 행 번호로 변환
+
+    각 신호는 CELLS_PER_SIGNAL + SIGNAL_GAP_ROWS 행을 차지
+
+    Args:
+        sig_idx: 신호 인덱스 (0부터)
+
+    Returns:
+        int: 1-indexed 행 번호
+    """
+    return ROW_WAVE_START + sig_idx * (CELLS_PER_SIGNAL + SIGNAL_GAP_ROWS)
 
 
 # ────────────────────────────────────────────────────────────────
@@ -102,40 +170,65 @@ def _get_level(sig: Dict, t_us: float) -> float:
 # ────────────────────────────────────────────────────────────────
 
 class ExcelWaveformExporter:
-    """Excel 파형 시각화 내보내기"""
+    """
+    Excel 파형 시각화 내보내기 클래스
+
+    openpyxl을 사용하여 신호 파형을 셀 테두리로 시각화합니다.
+    각 신호의 edge(전압 전환) 구간 파형 위에 timing 정보를 표시합니다.
+    """
 
     def export(self, filepath: str, signals: List[Dict],
                sync_data_us: float, model_name: str = "Model") -> bool:
+        """
+        신호 파형을 Excel 파일로 내보내기
+
+        Args:
+            filepath: 저장할 .xlsx 파일 경로
+            signals: 신호 딕셔너리 리스트
+            sync_data_us: 1프레임 길이 (us)
+            model_name: 시트 이름으로 사용할 모델 이름
+
+        Returns:
+            bool: 성공이면 True
+
+        Raises:
+            ImportError: openpyxl이 없는 경우
+        """
         try:
             from openpyxl import Workbook
             from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
             from openpyxl.utils import get_column_letter
-            from openpyxl.drawing.spreadsheet_drawing import SpreadsheetDrawing
         except ImportError:
-            raise ImportError("openpyxl이 필요합니다.")
+            raise ImportError("openpyxl이 필요합니다. 'pip install openpyxl'을 실행하세요.")
 
         if not signals:
             return False
 
         wb = Workbook()
         ws = wb.active
-        ws.title = model_name[:31]
+
+        # 피드백 7번: 특수문자 제거 후 시트 제목 설정 (Excel 제한: 31자)
+        safe_title = re.sub(r'[\\/*?\[\]:]', '_', model_name)[:31]
+        ws.title = safe_title
         ws.sheet_view.zoomScale = ZOOM_PERCENT
 
-        # ── 구간 계산 ─────────────────────────────────────────
+        # ── 구간 계산 ─────────────────────────────────────────────
         segments = _compute_segments(sync_data_us, signals)
         n_segs   = len(segments)
         total_us = sync_data_us
 
-        # 구간별 컬럼 폭 비례 배분
+        # 전체 파형 열을 구간 비율에 따라 분배
         TOTAL_WAVE_COLS = min(n_segs * 10, 160)
         seg_cols = []
         for s, e, _ in segments:
-            ratio  = (e - s) / total_us if total_us > 0 else 1 / n_segs
+            ratio = (e - s) / total_us if total_us > 0 else 1 / n_segs
             seg_cols.append(max(1, round(ratio * TOTAL_WAVE_COLS)))
+
+        # 반올림 오차 교정 (마지막 구간에 차분 흡수)
         diff = TOTAL_WAVE_COLS - sum(seg_cols)
         seg_cols[-1] = max(1, seg_cols[-1] + diff)
 
+        # 각 구간의 시작 열 번호 계산
         seg_start_cols = []
         cur = COL_WAVE_START
         for n in seg_cols:
@@ -143,38 +236,44 @@ class ExcelWaveformExporter:
             cur += n
         total_wave_end_col = cur - 1
 
-        # ── 열 너비 ───────────────────────────────────────────
+        # ── 열 너비 설정 ───────────────────────────────────────────
         ws.column_dimensions[get_column_letter(COL_NUM)].width  = NUM_COL_WIDTH
         ws.column_dimensions[get_column_letter(COL_NAME)].width = NAME_COL_WIDTH
         for c in range(COL_WAVE_START, total_wave_end_col + 1):
             ws.column_dimensions[get_column_letter(c)].width = WAVE_COL_WIDTH
 
-        # ── 행 높이 ───────────────────────────────────────────
-        ws.row_dimensions[ROW_LABEL].height      = 22
-        ws.row_dimensions[ROW_TIME_ARROW].height = 18
+        # ── 행 높이 설정 ───────────────────────────────────────────
+        ws.row_dimensions[ROW_LABEL].height = 22     # 구간 라벨 행
 
         for sig_idx in range(len(signals)):
             base = _sig_base_row(sig_idx)
+            # 타이밍 텍스트 행 (H행 바로 위)
+            timing_row = base - 1
+            if timing_row >= ROW_WAVE_START:
+                ws.row_dimensions[timing_row].height = 12
+            # 파형 3행 (H, M, L)
             for r in range(base, base + CELLS_PER_SIGNAL):
                 ws.row_dimensions[r].height = 10
-            # 여백 행
+            # 신호 간 여백 행
             for r in range(base + CELLS_PER_SIGNAL,
                            base + CELLS_PER_SIGNAL + SIGNAL_GAP_ROWS):
                 ws.row_dimensions[r].height = 6
 
-        # ── 스타일 헬퍼 ──────────────────────────────────────
+        # ── 스타일 헬퍼 ────────────────────────────────────────────
         center_align = Alignment(horizontal='center', vertical='center')
 
         def solid_side(style='thin', color='FF000000'):
+            """실선 Border.Side 생성"""
             return Side(style=style, color=color)
 
         def dashed_side():
+            """점선 Border.Side 생성 (구간 경계 표시용)"""
             return Side(style='dashDot', color='FFAAAAAA')
 
         header_fill = PatternFill('solid', fgColor=LABEL_COLOR)
         label_font  = Font(bold=True, size=FONT_LABEL)
 
-        # ── 행 1: 구간 라벨 ──────────────────────────────────
+        # ── 행 1: 구간 라벨 ─────────────────────────────────────
         ws.cell(ROW_LABEL, COL_NUM,  "NUM").font  = label_font
         ws.cell(ROW_LABEL, COL_NAME, "신호 이름").font = label_font
         ws.cell(ROW_LABEL, COL_NUM).fill  = header_fill
@@ -196,33 +295,15 @@ class ExcelWaveformExporter:
                 ws.merge_cells(start_row=ROW_LABEL, start_column=c1,
                                end_row=ROW_LABEL, end_column=c2)
 
-        # ── 행 2: 구간 시간 표시 (텍스트) ───────────────────
-        for si, (start, end, _) in enumerate(segments):
-            dur = end - start
-            if dur >= 1000:
-                txt = f"↔ {dur/1000:.2f}ms"
-            elif dur >= 1:
-                txt = f"↔ {dur:.1f}us"
-            else:
-                txt = f"↔ {dur*1000:.0f}ns"
-            c1 = seg_start_cols[si]
-            c2 = c1 + seg_cols[si] - 1
-            cell = ws.cell(ROW_TIME_ARROW, c1, txt)
-            cell.font      = Font(color='FF0070C0', bold=True, size=FONT_ARROW)
-            cell.alignment = center_align
-            if c2 > c1:
-                ws.merge_cells(start_row=ROW_TIME_ARROW, start_column=c1,
-                               end_row=ROW_TIME_ARROW, end_column=c2)
-
-        # ── 신호별 파형 그리기 ───────────────────────────────
+        # ── 신호별 파형 그리기 ────────────────────────────────────
         for sig_idx, sig in enumerate(signals):
-            base = _sig_base_row(sig_idx)
-            h_row = base          # 위 행 (High)
-            m_row = base + 1      # 가운데 행 (Mid/Zero)
-            l_row = base + 2      # 아래 행 (Low)
+            base  = _sig_base_row(sig_idx)
+            h_row = base           # High 행 (양전압 파형)
+            m_row = base + 1       # Mid 행 (0V 파형)
+            l_row = base + 2       # Low 행 (음전압 파형)
 
-            # NUM / NAME 병합
-            num_str = sig.get('num', f'S{sig_idx+1:02d}')
+            # NUM / NAME 셀 병합 및 표시
+            num_str = sig.get('num', f'S{sig_idx + 1:02d}')
             ws.cell(h_row, COL_NUM, num_str).font = Font(bold=True, size=9)
             ws.cell(h_row, COL_NUM).alignment = center_align
             ws.merge_cells(start_row=h_row, start_column=COL_NUM,
@@ -236,15 +317,14 @@ class ExcelWaveformExporter:
             # 구간별 파형 셀 그리기
             prev_voltage = None
             for si, (start, end, _) in enumerate(segments):
-                mid_t = (start + end) / 2
+                mid_t   = (start + end) / 2
                 voltage = _get_level(sig, mid_t)
                 c1 = seg_start_cols[si]
                 c2 = c1 + seg_cols[si] - 1
 
+                # 전압 전환(edge) 여부 판단
                 is_transition = (prev_voltage is not None and
                                  abs(prev_voltage - voltage) > 1e-6)
-
-                # 수직 전환 경계 처리
                 left_style = 'thick' if is_transition else None
 
                 self._draw_waveform_cells(
@@ -252,7 +332,7 @@ class ExcelWaveformExporter:
                     voltage, left_style, solid_side, dashed_side
                 )
 
-                # 구간 시작에 전압 레이블 (첫 구간만)
+                # 첫 구간에 전압값 레이블 표시
                 if si == 0:
                     v_label = f"{voltage:+.1f}V"
                     if voltage == 0:
@@ -267,9 +347,11 @@ class ExcelWaveformExporter:
 
                 prev_voltage = voltage
 
-        # ── 타이밍 화살표 도형 추가 (Delay, Width, Period) ───
-        self._add_timing_arrows(ws, signals, segments, seg_start_cols, seg_cols,
-                                sync_data_us, total_wave_end_col)
+            # ── 피드백 8번: 각 신호 파형 위에 timing 정보 표시 ──
+            self._draw_signal_timing(
+                ws, sig, sig_idx, segments, seg_start_cols, seg_cols,
+                sync_data_us, center_align, solid_side
+            )
 
         wb.save(filepath)
         return True
@@ -278,115 +360,152 @@ class ExcelWaveformExporter:
                               c1, c2, voltage,
                               left_style, solid_side_fn, dashed_side_fn):
         """
-        실제 파형 셀 테두리 그리기
-        
-        - voltage > 0 : h_row(위) 에 실선 상단 테두리 + 수직선
-        - voltage == 0: m_row(가운데) 에 실선 테두리 + 수직선
-        - voltage < 0 : l_row(아래) 에 실선 하단 테두리 + 수직선
-        - 구간 경계 (좌측): 점선
-        """
-        from openpyxl.styles import Border
+        파형 셀 테두리 그리기
 
-        # 기본 좌측 사이드 (구간 경계 = 점선, 전환 = 굵은선)
+        voltage에 따라 세 행(H/M/L) 중 해당 행에 실선 테두리를 그립니다.
+        전압 전환 경계(좌측)는 굵은 선, 구간 경계는 점선으로 표시합니다.
+
+        Args:
+            ws: 워크시트
+            h_row: High 행 번호
+            m_row: Mid 행 번호
+            l_row: Low 행 번호
+            c1, c2: 시작/끝 열 번호
+            voltage: 신호 전압값 (V)
+            left_style: 좌측 경계선 스타일 ('thick' 또는 None)
+            solid_side_fn: 실선 Side 생성 함수
+            dashed_side_fn: 점선 Side 생성 함수
+        """
+        from openpyxl.styles import Border, Side
+
+        # 좌측 경계선: 전압 전환 시 굵은 실선, 그 외 점선
         if left_style:
             left_side = solid_side_fn(left_style)
         else:
             left_side = dashed_side_fn()
 
         thick = solid_side_fn('thick')
-        thin  = solid_side_fn('thin')
-        none  = solid_side_fn(None) if False else \
-                __import__('openpyxl').styles.Side(style=None)
+        none  = Side(style=None)
 
         for col in range(c1, c2 + 1):
             is_left = (col == c1)
             ls = left_side if is_left else none
 
             if voltage > 0:
-                # 위쪽 테두리
+                # 양전압: H행(위)에 실선 상단 테두리
                 ws.cell(h_row, col).border = Border(top=thick, left=ls)
                 ws.cell(m_row, col).border = Border(left=ls if is_left else none)
                 ws.cell(l_row, col).border = Border(left=ls if is_left else none)
             elif voltage == 0:
-                # 가운데 실선
+                # 0V: M행(가운데)에 실선 테두리
                 ws.cell(h_row, col).border = Border(left=ls if is_left else none)
                 ws.cell(m_row, col).border = Border(top=thick, left=ls if is_left else none)
                 ws.cell(l_row, col).border = Border(left=ls if is_left else none)
             else:
-                # 아래쪽 테두리
+                # 음전압: L행(아래)에 실선 하단 테두리
                 ws.cell(h_row, col).border = Border(left=ls if is_left else none)
                 ws.cell(m_row, col).border = Border(left=ls if is_left else none)
                 ws.cell(l_row, col).border = Border(bottom=thick, left=ls if is_left else none)
 
-    def _add_timing_arrows(self, ws, signals, segments, seg_start_cols,
-                            seg_cols, sync_data_us, total_wave_end_col):
+    def _draw_signal_timing(self, ws, sig: Dict, sig_idx: int,
+                             segments, seg_start_cols, seg_cols,
+                             sync_data_us: float,
+                             center_align, solid_side_fn):
         """
-        Delay/Width/Period 타이밍 화살표 + 텍스트박스 추가
-        openpyxl의 drawing 기능을 사용합니다.
+        각 신호의 파형 위에 timing 정보(↔ + 시간 텍스트)를 표시
+
+        전압이 전환되는 구간(edge) 위의 파형 H행 위쪽 여백에
+        '↔ 21.0us' 형태의 텍스트를 삽입합니다.
+
+        피드백 8번: 신호별 rising/falling edge 구간 위에 ↔ timing 표시
+
+        Args:
+            ws: 워크시트
+            sig: 신호 딕셔너리
+            sig_idx: 신호 인덱스 (0부터)
+            segments: 구간 리스트 [(start, end, label), ...]
+            seg_start_cols: 각 구간의 시작 열 번호 리스트
+            seg_cols: 각 구간의 열 수 리스트
+            sync_data_us: 1프레임 길이 (us)
+            center_align: 가운데 정렬 객체
+            solid_side_fn: 실선 Side 생성 함수
         """
-        try:
-            from openpyxl.drawing.spreadsheet_drawing import SpreadsheetDrawing
-            from openpyxl.drawing.xdr import (
-                XDRPoint2D, XDRPositiveSize2D, XDRTransform2D,
-                XDRClientData
-            )
-            from openpyxl.utils.units import pixels_to_EMU, cm_to_EMU
-        except Exception:
-            return  # drawing 모듈 없으면 스킵
+        from openpyxl.styles import Font
 
-        # openpyxl connector/shape는 복잡하므로
-        # 텍스트박스 형태로 타이밍 정보를 ROW_TIME_ARROW 아래에 추가
-        # (도형 추가는 openpyxl에서는 제한적이라 텍스트 기반 표시)
+        base  = _sig_base_row(sig_idx)
+        h_row = base          # High 행: 파형 최상단
+        # timing 텍스트는 H행 위 여백 행에 표시
+        # (첫 신호이면 ROW_LABEL+1, 아니면 이전 신호 L행+여백 내)
+        timing_row = base - 1  # 각 신호 블록 바로 위 여백 행 활용
 
-        for sig_idx, sig in enumerate(signals):
-            delay  = float(sig.get('delay',  0))
-            width  = float(sig.get('width',  0))
-            period = float(sig.get('period', 0))
+        delay  = float(sig.get('delay',  0))
+        width  = float(sig.get('width',  0))
+        period = float(sig.get('period', 0))
 
-            base    = _sig_base_row(sig_idx)
-            h_row   = base
+        # DC 모드이면 timing 표시 불필요
+        if delay == 0 and width == 0 and period == 0:
+            return
 
-            # Delay 범위에 해당하는 열 찾기
-            if delay > 0 and sync_data_us > 0:
-                delay_end = delay
-                cols = self._us_range_to_cols(0, delay_end, sync_data_us,
-                                               segments, seg_start_cols, seg_cols)
-                if cols:
-                    c_start, c_end = cols
-                    mid_col = (c_start + c_end) // 2
-                    cell = ws.cell(h_row - 1 if h_row > ROW_WAVE_START else h_row,
-                                   mid_col)
-                    if cell.value is None:
-                        cell.value = f"Delay:{delay:.1f}us"
-                        cell.font  = __import__('openpyxl').styles.Font(
-                            color='FF7030A0', size=6, bold=True)
+        # ── Delay 구간: 0 → delay ────────────────────────────
+        if delay > 0:
+            cols = self._us_range_to_cols(0, delay, sync_data_us,
+                                          segments, seg_start_cols, seg_cols)
+            if cols:
+                c_start, c_end = cols
+                mid_col = (c_start + c_end) // 2
+                target_row = timing_row if timing_row >= ROW_WAVE_START else h_row
+                cell = ws.cell(target_row, mid_col)
+                if cell.value is None:
+                    cell.value     = f"↔ {_format_us(delay)}"
+                    cell.font      = Font(color='FF7030A0', size=FONT_TIMING, bold=True)
+                    cell.alignment = center_align
 
-            # Width
-            if width > 0 and sync_data_us > 0:
-                w_start = delay
-                w_end   = delay + width
-                cols = self._us_range_to_cols(w_start, w_end, sync_data_us,
-                                               segments, seg_start_cols, seg_cols)
-                if cols:
-                    c_start, c_end = cols
-                    mid_col = (c_start + c_end) // 2
-                    cell = ws.cell(h_row, mid_col)
-                    if cell.value is None:
-                        cell.value = f"W:{width:.1f}us"
-                        cell.font  = __import__('openpyxl').styles.Font(
-                            color='FF0070C0', size=6, bold=True)
+        # ── Width 구간: delay → delay+width ──────────────────
+        if width > 0:
+            cols = self._us_range_to_cols(delay, delay + width, sync_data_us,
+                                          segments, seg_start_cols, seg_cols)
+            if cols:
+                c_start, c_end = cols
+                mid_col = (c_start + c_end) // 2
+                target_row = timing_row if timing_row >= ROW_WAVE_START else h_row
+                cell = ws.cell(target_row, mid_col)
+                if cell.value is None:
+                    cell.value     = f"↔ {_format_us(width)}"
+                    cell.font      = Font(color='FF0070C0', size=FONT_TIMING, bold=True)
+                    cell.alignment = center_align
 
-            # Period
-            if period > 0 and sync_data_us > 0:
-                cols = self._us_range_to_cols(0, period, sync_data_us,
-                                               segments, seg_start_cols, seg_cols)
-                if cols:
-                    c_start, c_end = cols
-                    mid_col = (c_start + c_end) // 2
+        # ── Period 구간: 0 → period ───────────────────────────
+        # (width와 겹치지 않는 중간 지점에 표시)
+        if period > 0 and period > delay + width:
+            # period 텍스트는 파형 h_row에 직접 표시 (여백이 없는 경우 대비)
+            cols = self._us_range_to_cols(0, period, sync_data_us,
+                                          segments, seg_start_cols, seg_cols)
+            if cols:
+                c_start, c_end = cols
+                # 중간 지점보다 약간 뒤에 표시 (delay+width 이후 공간)
+                fallback_start = min(c_start + max(1, (c_end - c_start) * 2 // 3), c_end)
+                cell = ws.cell(h_row, fallback_start)
+                if cell.value is None:
+                    cell.value     = f"T:{_format_us(period)}"
+                    cell.font      = Font(color='FFCC5500', size=FONT_TIMING, bold=True)
+                    cell.alignment = center_align
 
-    def _us_range_to_cols(self, us_start, us_end, sync_data_us,
-                           segments, seg_start_cols, seg_cols):
-        """us 범위를 열 범위로 변환"""
+    def _us_range_to_cols(self, us_start: float, us_end: float,
+                           sync_data_us: float,
+                           segments, seg_start_cols, seg_cols
+                           ) -> Optional[Tuple[int, int]]:
+        """
+        us 시간 범위를 Excel 열 범위로 변환
+
+        Args:
+            us_start: 시작 시간 (us)
+            us_end: 종료 시간 (us)
+            sync_data_us: 1프레임 길이 (us)
+            segments, seg_start_cols, seg_cols: 구간 정보
+
+        Returns:
+            (col_start, col_end) 또는 None
+        """
         if us_end <= us_start or sync_data_us <= 0:
             return None
         total_cols = sum(seg_cols)
@@ -395,8 +514,3 @@ class ExcelWaveformExporter:
         if c_start > c_end:
             c_end = c_start
         return c_start, c_end
-
-
-def _sig_base_row(sig_idx: int) -> int:
-    """신호 인덱스 → 시작 행 번호"""
-    return ROW_WAVE_START + sig_idx * (CELLS_PER_SIGNAL + SIGNAL_GAP_ROWS)
