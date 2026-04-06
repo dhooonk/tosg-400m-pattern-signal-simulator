@@ -38,7 +38,7 @@ class ModelListPanel(tk.Frame):
 
     def __init__(self, parent, model_store, signal_manager,
                  sync_data_manager, timing_viewer=None,
-                 pattern_data_panel=None):
+                 pattern_data_panel=None, listbox_height=8):
         """
         초기화 메서드
 
@@ -49,13 +49,16 @@ class ModelListPanel(tk.Frame):
             sync_data_manager: SyncDataManager 인스턴스
             timing_viewer: TimingViewer (나중에 연결 가능)
             pattern_data_panel: PatternDataPanel (나중에 연결 가능)
+            listbox_height: Listbox 표시 행 수 (기본 8)
         """
         super().__init__(parent, bg='#e8e8e8')
-        self.model_store       = model_store
-        self.signal_manager    = signal_manager
-        self.sync_data_manager = sync_data_manager
-        self.timing_viewer     = timing_viewer
+        self.model_store        = model_store
+        self.signal_manager     = signal_manager
+        self.sync_data_manager  = sync_data_manager
+        self.timing_viewer      = timing_viewer
         self.pattern_data_panel = pattern_data_panel
+        self._listbox_height    = listbox_height
+        self._plot_after_id     = None  # 비동기 plot 예약 ID
 
         self._setup_ui()
         # ModelStore 변경 시 자동 갱신 등록
@@ -86,7 +89,7 @@ class ModelListPanel(tk.Frame):
             selectbackground='#2980b9',
             selectforeground='white',
             activestyle='none',
-            height=20
+            height=self._listbox_height
         )
         vsb = ttk.Scrollbar(listframe, orient='vertical',
                              command=self._listbox.yview)
@@ -182,7 +185,19 @@ class ModelListPanel(tk.Frame):
             model.sync_data_us
         )
 
-        # ── 타이밍 다이어그램 갱신 ────────────────────────────────
+        # ── 타이밍 다이어그램 갱신 (비동기: 빠른 클릭 시 불필요한 연산 방지) ──
+        if self.timing_viewer:
+            # 기존 대기 중인 업데이트 취소 후 새로 예약
+            if hasattr(self, '_plot_after_id') and self._plot_after_id:
+                try:
+                    self.after_cancel(self._plot_after_id)
+                except Exception:
+                    pass
+            self._plot_after_id = self.after(50, self._deferred_update_plot)
+
+    def _deferred_update_plot(self):
+        """비동기 타이밍 다이어그램 갱신 (after() 콜백)"""
+        self._plot_after_id = None
         if self.timing_viewer:
             self.timing_viewer.update_plot()
 

@@ -27,9 +27,7 @@ import os
 # src 폴더를 모듈 검색 경로에 추가
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 
-from signal_model import SignalManager
-from sync_data import SyncDataManager
-from signal_storage import SignalStorage
+from signal_model import SignalManager, SignalStorage
 from timing_viewer import TimingViewer
 from signal_table_widget import SignalTableWidget
 from signal_editor_panel import SignalEditorPanel
@@ -103,6 +101,7 @@ class MainApplication(tk.Tk):
             self.sync_data_manager,
             timing_viewer=None,       # 나중에 연결
             pattern_data_panel=None,  # 나중에 연결
+            listbox_height=8,         # 높이 축소 (8줄)
         )
         self.model_list_panel.pack(side=tk.TOP, fill=tk.X)
 

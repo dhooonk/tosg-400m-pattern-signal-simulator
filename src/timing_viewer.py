@@ -1,12 +1,194 @@
 """
-타이밍 다이어그램 뷰어
-Matplotlib을 사용하여 신호의 타이밍 파형을 시각화하는 위젯입니다.
+타이밍 다이어그램 뷰어 + 파형 생성기
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+포함 클래스:
+  - WaveformGenerator : Signal 파라미터 → (time[], voltage[]) 배열 변환
+                        [통합] 구 waveform_generator.py에서 이동
+  - TimingViewer      : Matplotlib 기반 타이밍 다이어그램 위젯
+
+파형 생성 모드 (WaveformGenerator)
+────────────────────────────────────
+1. DC 모드 (delay=0, width=0, period=0)
+   SIG_MODE/INV 에 따라 프레임별 일정 전압 출력:
+     MODE=0, INV=0 → V1 고정
+     MODE=0, INV=1 → 프레임별 V1↔V2
+     MODE=1, INV=0 → 프레임별 V1↔V3
+     MODE=1, INV=1 → 프레임별 V1↔V4
+
+2. 반복 펄스 모드 (period > 0)
+   period 주기로 delay→V1, width→V2, 나머지→V1 반복
+
+3. 단일 펄스 모드 (period = 0, width > 0)
+   0~delay: V1, delay~delay+width: V2, 이후: V1
+
+TimingViewer 업데이트 이력
+───────────────────────────
+  V10: 신호 높이 고정, Y축에 신호 이름, 내부에 전압 레이블
+  V11: 범례 위치 설정, v1~v4 레이블, Frame/Time(us) 모드
+  V12: [통합] WaveformGenerator 인라인
+       모델 클릭 시 비동기(after 50ms) 업데이트로 속도 개선
 """
 
 import tkinter as tk
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 import numpy as np
+
+
+# ════════════════════════════════════════════════════════
+# WaveformGenerator — 파형 데이터 생성
+# [통합] 구 waveform_generator.py에서 이동
+# ════════════════════════════════════════════════════════
+
+class WaveformGenerator:
+    """
+    Signal 파라미터를 받아 Matplotlib 플롯용 파형 배열을 생성합니다.
+
+    단위:
+      - 입력 시간 파라미터 : us (마이크로초)
+      - 입력 sync_data   : 초 (second) → 내부에서 us로 변환
+      - 출력 time 배열   : us
+      - 출력 voltage 배열: V
+    """
+
+    @staticmethod
+    def generate_waveform(signal, num_frames: int, sync_data: float):
+        """
+        신호 파형 배열 생성.
+
+        Args:
+            signal    : Signal 객체 (v1~v4, delay, width, period, sig_mode, inversion)
+            num_frames: 표시할 프레임 수
+            sync_data : 1프레임 길이 (초 단위) — 내부에서 us로 변환됨
+
+        Returns:
+            tuple(np.ndarray, np.ndarray):
+              - time_array    : 시간 축 (us)
+              - voltage_array : 전압 축 (V)
+        """
+        # DC 모드 판별: delay, width, period 모두 0이면 DC 고정 출력
+        is_dc = (signal.delay == 0 and signal.width == 0 and signal.period == 0)
+
+        # sync_data(초) → us 변환 (파라미터와 단위 일치)
+        frame_us    = sync_data * 1_000_000
+        total_us    = frame_us * num_frames
+
+        # 시간 배열: 프레임당 2000 포인트로 충분한 해상도 확보
+        n_pts   = 2000 * num_frames
+        time    = np.linspace(0, total_us, n_pts)
+        voltage = np.zeros_like(time)
+
+        for f_idx in range(num_frames):
+            f_start  = f_idx * frame_us
+            f_end    = (f_idx + 1) * frame_us
+            mask     = (time >= f_start) & (time < f_end)
+            rel_time = time[mask] - f_start       # 프레임 내 상대 시간 (us)
+
+            # 프레임 번호(1-based), 홀수/짝수 판별
+            is_odd = ((f_idx + 1) % 2) == 1
+
+            if is_dc:
+                # ── DC 모드 ───────────────────────────────
+                # SIG_MODE·INV에 따라 프레임별 고정 전압 결정
+                v = WaveformGenerator._dc_voltage(signal, is_odd)
+                voltage[mask] = v
+            else:
+                # ── 펄스 모드 ─────────────────────────────
+                # SIG_MODE·INV에 따라 (low, high) 전압 쌍 결정
+                low_v, high_v = WaveformGenerator._pulse_levels(signal, is_odd)
+                frame_v = np.full(rel_time.shape, low_v)  # 기본: low 전압
+
+                if signal.period > 0:
+                    # 반복 펄스: period 주기로 패턴 반복
+                    # phase가 [delay, delay+width) 구간이면 high 전압
+                    phase = rel_time % signal.period
+                    hi_mask = (phase >= signal.delay) & (
+                        phase < signal.delay + signal.width)
+                else:
+                    # 단일 펄스: 프레임 내 [delay, delay+width) 구간만 high
+                    hi_mask = (rel_time >= signal.delay) & (
+                        rel_time < signal.delay + signal.width)
+
+                frame_v[hi_mask] = high_v
+                voltage[mask] = frame_v
+
+        return time, voltage
+
+    @staticmethod
+    def _dc_voltage(signal, is_odd: bool) -> float:
+        """
+        DC 모드에서 현재 프레임의 전압값 결정.
+
+        SIG_MODE / INVERSION 조합:
+          MODE=0, INV=0 → 항상 V1
+          MODE=0, INV=1 → 홀수 V1, 짝수 V2
+          MODE=1, INV=0 → 홀수 V1, 짝수 V3
+          MODE=1, INV=1 → 홀수 V1, 짝수 V4
+
+        Args:
+            signal : Signal 객체
+            is_odd : 현재 프레임이 홀수이면 True
+
+        Returns:
+            float: 결정된 DC 전압 (V)
+        """
+        if signal.sig_mode == 0:
+            if signal.inversion == 0:
+                return signal.v1                              # 고정 V1
+            return signal.v1 if is_odd else signal.v2        # V1↔V2 교대
+        else:  # sig_mode == 1
+            if signal.inversion == 0:
+                return signal.v1 if is_odd else signal.v3    # V1↔V3 교대
+            return signal.v1 if is_odd else signal.v4        # V1↔V4 교대
+
+    @staticmethod
+    def _pulse_levels(signal, is_odd: bool):
+        """
+        펄스 모드에서 (low_voltage, high_voltage) 쌍 결정.
+
+        SIG_MODE / INVERSION 조합:
+          MODE=0, INV=0 → 모든 프레임 (V1, V2)
+          MODE=0, INV=1 → 홀수 (V1,V2), 짝수 (V2,V1) — High↔Low 교대
+          MODE=1, INV=0 → 홀수 (V1,V2), 짝수 (V3,V4)
+          MODE=1, INV=1 → 홀수 (V1,V2), 짝수 (V4,V3)
+
+        Args:
+            signal : Signal 객체
+            is_odd : 현재 프레임이 홀수이면 True
+
+        Returns:
+            tuple(float, float): (low_voltage, high_voltage)
+        """
+        if signal.sig_mode == 0:
+            if signal.inversion == 0:
+                return signal.v1, signal.v2              # 항상 V1/V2
+            # 짝수 프레임은 V1·V2 순서 반전
+            return (signal.v1, signal.v2) if is_odd else (signal.v2, signal.v1)
+        else:  # sig_mode == 1
+            if is_odd:
+                return signal.v1, signal.v2              # 홀수: V1/V2
+            # 짝수: V3/V4 또는 V4/V3 (inversion에 따라)
+            if signal.inversion == 0:
+                return signal.v3, signal.v4
+            return signal.v4, signal.v3
+
+    @staticmethod
+    def get_voltage_range(signals):
+        """
+        신호 리스트에서 전체 전압 범위(min, max) 계산.
+
+        타이밍 다이어그램 Y축 범위 설정에 사용됩니다.
+
+        Args:
+            signals: Signal 객체 리스트
+
+        Returns:
+            tuple(float, float): (min_voltage, max_voltage)
+        """
+        if not signals:
+            return 0.0, 5.0
+        all_v = [v for s in signals for v in (s.v1, s.v2, s.v3, s.v4)]
+        return min(all_v), max(all_v)
 
 
 class TimingViewer(tk.Frame):
@@ -138,8 +320,6 @@ class TimingViewer(tk.Frame):
                         transform=self.ax.transAxes, color='black')
             self.canvas.draw()
             return
-        
-        from waveform_generator import WaveformGenerator
         
         sync_data = self.sync_data_manager.get_current_sync_data()
         

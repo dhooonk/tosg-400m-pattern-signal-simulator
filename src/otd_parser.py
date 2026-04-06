@@ -9,7 +9,7 @@ OTD 파일 구조:
   - PATTERN_DATA (400번대): 패턴 전압 데이터 (R/G/B/W V1-V4, mV → V)
   - GLOBAL_MRT (52=): 멀티 원격 그룹 목록
   - MULTIREMOTE (500/600번대): 멀티 원격 데이터 및 순서
-  - 999=END: 모델 종료
+  - 999=END: 모델 종료 또는 MULTIREMOTE 종료
   - 9999=END: 전체 종료
 """
 
@@ -173,7 +173,20 @@ class OtdParser:
     OTD 파일 파서 클래스
     
     parse() 메서드로 OTD 파일을 읽어 OtdFile 객체 반환.
+
+    주의사항:
+      - 섹션 태그([MODEL_XXX], [SIGNAL_DATA_XXX], [PATTERN_DATA_XXX],
+        [HEADER], [GLOBAL_MRT], [MULTIREMOTE_XXX])는 '='가 없어
+        기존 key=value 파싱으로는 처리 불가. 별도 섹션 태그 파싱 로직 필요.
+      - MULTIREMOTE 데이터(600번대)는 섹션 태그를 통해 current_mrt를
+        초기화한 뒤에만 올바르게 연결됨.
     """
+
+    # 파서 내부 상태 상수
+    _STATE_HEADER       = 'header'
+    _STATE_MODEL        = 'model'
+    _STATE_GLOBAL_MRT   = 'global_mrt'
+    _STATE_MULTIREMOTE  = 'multiremote'
 
     @staticmethod
     def parse(filepath: str) -> OtdFile:
@@ -188,7 +201,6 @@ class OtdParser:
             
         Raises:
             FileNotFoundError: 파일을 찾을 수 없을 때
-            ValueError: 파일 형식이 올바르지 않을 때
         """
         if not os.path.exists(filepath):
             raise FileNotFoundError(f"파일을 찾을 수 없습니다: {filepath}")
@@ -206,17 +218,60 @@ class OtdParser:
             if not line:
                 continue
 
+            # ── 섹션 태그 처리 [ ... ] ──────────────────────────
+            # 섹션 태그는 '='를 포함하지 않으므로 먼저 처리
+            if line.startswith('[') and line.endswith(']'):
+                tag = line[1:-1]  # 괄호 제거
+
+                if tag == 'HEADER':
+                    in_global_mrt = False
+                    current_model = None
+                    current_mrt = None
+
+                elif tag == 'GLOBAL_MRT':
+                    in_global_mrt = True
+                    # 현재 열린 모델 닫기
+                    if current_model is not None:
+                        result.models.append(current_model)
+                        current_model = None
+
+                elif tag.startswith('MODEL_'):
+                    # [MODEL_XXX] 태그: 새 모델 시작 신호
+                    # 실제 모델 번호는 아래 101=MODEL 라인에서 읽음
+                    # (단, 여기서 current_model을 초기화해두지 않음 — 101= 발견 시 초기화)
+                    in_global_mrt = False
+
+                elif tag.startswith('SIGNAL_DATA_') or tag.startswith('PATTERN_DATA_'):
+                    # 섹션 구분 태그 — 파싱 상태 변경 불필요 (key_num으로 자동 처리)
+                    pass
+
+                elif tag.startswith('MULTIREMOTE_'):
+                    # [MULTIREMOTE_XXX] 태그: 새 MultiRemote 블록 시작
+                    # ★ 버그 수정: 이 태그를 인식해야 600번대 데이터가 current_mrt에 연결됨
+                    in_global_mrt = False
+                    # 현재 열린 모델 닫기
+                    if current_model is not None:
+                        result.models.append(current_model)
+                        current_model = None
+                    # 새 MultiRemote 객체 준비 (이름은 501= 라인에서 설정)
+                    current_mrt = MultiRemote()
+                    result.multi_remotes.append(current_mrt)
+
+                continue  # 섹션 태그 라인은 key=value 파싱 불필요
+
             # ── 전체/모델 종료 ──────────────────────────────────
             if line == '9999=END':
                 break
+
             if line.startswith('999=END'):
-                # 모델 종료
+                # 모델 종료 또는 MULTIREMOTE 블록 종료
                 if current_model is not None:
                     result.models.append(current_model)
                     current_model = None
                 if in_global_mrt:
-                    # GLOBAL_MRT 블록 내 END
                     in_global_mrt = False
+                # MULTIREMOTE 블록 종료 — current_mrt는 유지(이미 result에 추가됨)
+                # 다음 [MULTIREMOTE_XXX] 태그에서 새로 시작됨
                 continue
 
             # ── 키=값 파싱 ─────────────────────────────────────
@@ -229,7 +284,6 @@ class OtdParser:
             try:
                 key_num = int(key)
             except ValueError:
-                # 숫자가 아닌 키 (예: 52)는 별도 처리
                 key_num = None
 
             # ── GLOBAL_MRT 식별 (52=...) ──────────────────────
@@ -249,35 +303,52 @@ class OtdParser:
             # ── 모델 시작 (101=MODEL,...) ──────────────────────
             if key_num == 101:
                 current_model = OtdModel()
-                current_model.model_num = value.split(',')[0] if ',' in value else value
-                # 앞에 'MODEL,' 접두사 제거
                 parts = value.split(',')
+                # "MODEL,010" 또는 "010" 형식 모두 처리
                 current_model.model_num = parts[-1].strip() if parts else value
                 continue
 
+            # ── MULTIREMOTE 영역 (current_model이 없을 때) ────
             if current_model is None:
-                # GLOBAL_MRT / MULTIREMOTE 영역
                 if 500 <= key_num < 600:
-                    # MULTIREMOTE 헤더
-                    current_mrt = MultiRemote()
-                    parts = value.split(',', 1)
-                    if len(parts) >= 1:
-                        current_mrt.mrt_id = parts[0].strip()
-                    if len(parts) >= 2:
-                        current_mrt.name = parts[1].strip()
-                    result.multi_remotes.append(current_mrt)
-                elif 600 <= key_num < 700 and current_mrt is not None:
-                    # MULTIREMOTE 실행 항목
+                    # 501=MRT,001,이름 형식
+                    # [MULTIREMOTE_XXX] 태그에서 이미 current_mrt 생성됨
+                    if current_mrt is None:
+                        # 섹션 태그 없이 501=이 먼저 올 경우 대비
+                        current_mrt = MultiRemote()
+                        result.multi_remotes.append(current_mrt)
                     parts = [p.strip() for p in value.split(',')]
-                    entry = MultiRemoteEntry()
-                    try:
-                        entry.order = key_num - 600
-                        entry.model_num = int(parts[0]) if len(parts) > 0 else 0
-                        entry.pattern_num = int(parts[1]) if len(parts) > 1 else 0
-                        entry.time = float(parts[2]) if len(parts) > 2 else 0.0
-                    except (ValueError, IndexError):
-                        pass
-                    current_mrt.entries.append(entry)
+                    # parts: ['MRT', '001', '이름'] 또는 ['001', '이름']
+                    if len(parts) >= 3 and parts[0].upper() == 'MRT':
+                        current_mrt.mrt_id = parts[1]
+                        current_mrt.name   = parts[2]
+                    elif len(parts) >= 2:
+                        current_mrt.mrt_id = parts[0]
+                        current_mrt.name   = parts[1]
+                    elif len(parts) >= 1:
+                        current_mrt.mrt_id = parts[0]
+
+                elif 600 <= key_num < 700:
+                    # 601=MRT01,모델번호,패턴번호,시간
+                    # ★ 버그 수정: current_mrt가 None이면 마지막 것을 사용
+                    if current_mrt is None and result.multi_remotes:
+                        current_mrt = result.multi_remotes[-1]
+
+                    if current_mrt is not None:
+                        parts = [p.strip() for p in value.split(',')]
+                        # parts: ['MRT01', '8', '1', '0']
+                        # MRT01 접두사를 제거하고 데이터만 파싱
+                        data_parts = parts[1:] if (len(parts) > 1 and
+                                                   parts[0].upper().startswith('MRT')) else parts
+                        entry = MultiRemoteEntry()
+                        try:
+                            entry.order       = key_num - 600  # 601 → 1, 602 → 2 ...
+                            entry.model_num   = int(data_parts[0]) if len(data_parts) > 0 else 0
+                            entry.pattern_num = int(data_parts[1]) if len(data_parts) > 1 else 0
+                            entry.time        = float(data_parts[2]) if len(data_parts) > 2 else 0.0
+                        except (ValueError, IndexError):
+                            pass
+                        current_mrt.entries.append(entry)
                 continue
 
             # ── 모델 내 데이터 ────────────────────────────────
@@ -294,7 +365,6 @@ class OtdParser:
                     current_model.sync_data_raw = int(raw)
                     current_model.sync_data_us = current_model.sync_data_raw / 10.0
                     if current_model.sync_data_raw > 0:
-                        # 주파수 = 10,000,000 / sync_data_raw (단위: 1/10us → Hz)
                         current_model.sync_freq_hz = 10_000_000.0 / current_model.sync_data_raw
                 except ValueError:
                     pass
@@ -328,7 +398,6 @@ class OtdParser:
     @staticmethod
     def _parse_header_line(key_num: int, value: str, header: OtdHeader):
         """헤더 라인 파싱"""
-        # value에 ',' 접두사(키 이름)가 있을 수 있음: "DEVICE,LCD SHORTING BAR"
         parts = value.split(',', 1)
         actual_value = parts[1].strip() if len(parts) > 1 else value.strip()
 
@@ -354,17 +423,16 @@ class OtdParser:
         """
         SIGNAL_DATA 라인 파싱
         
-        포맷: 201-S01,GND,0,0,0,0,0,0,0,0,0,0,0,0
-        컬럼: NUM, NAME, V1, V2, V3, V4, DELAY, WIDTH, PERIOD, LENGTH, AREA, MF, MOD, INV, [TYPE]
+        포맷: 201-S01=GND,0,0,0,0,0,0,0,0,0,0,0,0,0
+        컬럼 (value 기준): NUM, NAME, V1, V2, V3, V4, DELAY, WIDTH, PERIOD, LENGTH, AREA, MF, MOD, INV, [TYPE]
         단위: 전압=mV, 시간=1/10us
         """
-        # key에 '-'가 포함된 경우 (201-S01): value에 NUM이 포함되어 있음
         parts = [p.strip() for p in value.split(',')]
         if len(parts) < 2:
             return None
 
         sig = OtdSignal()
-        sig.num = parts[0]  # S01
+        sig.num  = parts[0]  # S01
         sig.name = parts[1] if len(parts) > 1 else ""
 
         # 전압 (mV → V)
@@ -396,8 +464,7 @@ class OtdParser:
         """
         PATTERN_DATA 라인 파싱
         
-        포맷: 401=PTN01,VGL-10,-10000,18000,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        컬럼: No., NAME, R_V1,R_V2,R_V3,R_V4, G_V1~V4, B_V1~V4, W_V1~V4, TYPE
+        포맷: 401=PTN01,NAME,R_V1..V4,G_V1..V4,B_V1..V4,W_V1..V4,TYPE
         단위: 전압=mV
         """
         parts = [p.strip() for p in value.split(',')]
@@ -485,6 +552,101 @@ def otd_signal_to_signal_dict(otd_sig: OtdSignal) -> dict:
     }
 
 
+# ════════════════════════════════════════════════════════
+# OtdFile → ModelStore 변환 헬퍼
+# [통합] 구 otd_to_model_store.py에서 이동
+# ════════════════════════════════════════════════════════
+
+def otd_file_to_model_store(otd_file: OtdFile):
+    """
+    OtdFile 객체를 ModelStore 호환 데이터로 변환.
+
+    OtdParser.parse()가 반환한 OtdFile을 받아
+    ModelStore.set_models()에 바로 넣을 수 있는
+    (List[ModelData], List[MultiRemoteGroup]) 튜플로 변환합니다.
+
+    변환 흐름:
+      OtdFile.models  → List[ModelData]
+        OtdSignal     → Signal (otd_signal_to_signal_dict 경유)
+        OtdPattern    → dict (패턴 파라미터 딕셔너리)
+      OtdFile.multi_remotes → List[MultiRemoteGroup]
+        MultiRemoteEntry    → MrtEntry
+
+    신호 색상:
+      matplotlib 기본 10색 팔레트를 순환 할당합니다.
+
+    Args:
+        otd_file (OtdFile): OtdParser.parse()로 파싱된 OTD 파일 객체
+
+    Returns:
+        tuple:
+          - List[ModelData]        : 모든 모델 데이터
+          - List[MultiRemoteGroup] : MULTIREMOTE 그룹(없으면 빈 리스트)
+    """
+    from model_store import ModelData, MultiRemoteGroup, MrtEntry
+    from signal_model import Signal
+
+    # matplotlib 기본 10색 팔레트 (신호 색상 순환 할당)
+    default_colors = [
+        '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
+        '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf',
+    ]
+
+    # ── OtdModel → ModelData 변환 ────────────────────────
+    model_list = []
+    for otd_model in otd_file.models:
+        # OtdSignal → Signal (단위 변환 포함: mV→V, 1/10us→us)
+        signals = []
+        for i, otd_sig in enumerate(otd_model.signals):
+            sig_dict = otd_signal_to_signal_dict(otd_sig)
+            sig_dict['color'] = default_colors[i % len(default_colors)]
+            signals.append(Signal.from_dict(sig_dict))
+
+        # OtdPattern → 딕셔너리 (PatternDataPanel 호환 형식)
+        patterns = [
+            {
+                'ptn_no': p.ptn_no,
+                'name':   p.name,
+                'r_v1': p.r_v1, 'r_v2': p.r_v2, 'r_v3': p.r_v3, 'r_v4': p.r_v4,
+                'g_v1': p.g_v1, 'g_v2': p.g_v2, 'g_v3': p.g_v3, 'g_v4': p.g_v4,
+                'b_v1': p.b_v1, 'b_v2': p.b_v2, 'b_v3': p.b_v3, 'b_v4': p.b_v4,
+                'w_v1': p.w_v1, 'w_v2': p.w_v2, 'w_v3': p.w_v3, 'w_v4': p.w_v4,
+                'ptn_type': p.ptn_type,
+            }
+            for p in otd_model.patterns
+        ]
+
+        model_list.append(ModelData(
+            model_num    = otd_model.model_num,
+            name         = otd_model.name,
+            frequency_hz = otd_model.sync_freq_hz,
+            sync_data_us = otd_model.sync_data_us,
+            sync_cntr    = otd_model.sync_cntr,
+            signals      = signals,
+            patterns     = patterns,
+        ))
+
+    # ── MultiRemote → MultiRemoteGroup 변환 ──────────────
+    mrt_groups = []
+    for mr in otd_file.multi_remotes:
+        entries = [
+            MrtEntry(
+                seq       = e.order,
+                model_num = str(e.model_num),
+                ptn_no    = e.pattern_num,
+                time      = int(e.time),
+            )
+            for e in mr.entries
+        ]
+        mrt_groups.append(MultiRemoteGroup(
+            mrt_no  = mr.mrt_id,
+            name    = mr.name,
+            entries = entries,
+        ))
+
+    return model_list, mrt_groups
+
+
 if __name__ == '__main__':
     import sys
     if len(sys.argv) > 1:
@@ -494,3 +656,6 @@ if __name__ == '__main__':
         for m in result.models:
             print(f"  MODEL {m.model_num}: {m.name}, {m.sync_freq_hz:.2f}Hz, "
                   f"신호 {len(m.signals)}개, 패턴 {len(m.patterns)}개")
+        print(f"MULTIREMOTE 수: {len(result.multi_remotes)}")
+        for mr in result.multi_remotes:
+            print(f"  MRT {mr.mrt_id}: {mr.name}, 항목 {len(mr.entries)}개")
