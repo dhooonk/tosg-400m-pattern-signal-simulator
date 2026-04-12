@@ -28,6 +28,7 @@ import os
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
 
 from signal_model import SignalManager, SignalStorage
+from sync_data import SyncDataManager
 from timing_viewer import TimingViewer
 from signal_table_widget import SignalTableWidget
 from signal_editor_panel import SignalEditorPanel
