@@ -214,18 +214,14 @@ class SignalEditorPanel(tk.Frame):
         btn_frame = tk.Frame(self, bg='#f0f0f0', pady=10)
         btn_frame.pack(side=tk.TOP, fill=tk.X)
 
-        self.save_btn = tk.Button(
-            btn_frame, text="신호 추가", command=self._on_save,
-            bg='#4CAF50', fg='black', font=('Arial', 10, 'bold'),
-            width=12, relief=tk.RAISED, borderwidth=2
-        )
+        _BTN = dict(bg='#e8e8e8', fg='#333333', font=('Arial', 10),
+                    relief=tk.GROOVE, borderwidth=1, width=12)
+        self.save_btn = tk.Button(btn_frame, text="신호 추가",
+                                  command=self._on_save, **_BTN)
         self.save_btn.pack(side=tk.LEFT, padx=5)
 
-        tk.Button(
-            btn_frame, text="취소", command=self._on_cancel,
-            bg='#9E9E9E', fg='black', font=('Arial', 10, 'bold'),
-            width=12, relief=tk.RAISED, borderwidth=2
-        ).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text="취소", command=self._on_cancel,
+                  **_BTN).pack(side=tk.LEFT, padx=5)
 
     def _choose_color(self):
         """색상 선택 다이얼로그 열기"""

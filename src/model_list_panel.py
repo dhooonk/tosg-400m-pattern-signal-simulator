@@ -83,8 +83,8 @@ class ModelListPanel(tk.Frame):
         # 헤더 레이블
         header = tk.Label(
             self, text="MODEL LIST",
-            font=('Arial', 10, 'bold'),
-            bg='#666666', fg='white', pady=6
+            font=('Arial', 12, 'bold'),
+            bg='#555555', fg='white', pady=6
         )
         header.pack(side=tk.TOP, fill=tk.X)
 

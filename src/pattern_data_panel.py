@@ -58,11 +58,12 @@ class PatternDataPanel(tk.Frame):
         btn_frame = tk.Frame(self, bg='#f0f0f0')
         btn_frame.pack(side=tk.TOP, fill=tk.X, padx=5, pady=3)
 
-        btn_cfg = dict(font=('Arial', 9, 'bold'), relief=tk.RAISED, borderwidth=2, width=10)
-        tk.Button(btn_frame, text="추가",   command=self._on_add,    bg='#4CAF50', fg='black', **btn_cfg).pack(side=tk.LEFT, padx=2)
-        tk.Button(btn_frame, text="수정",   command=self._on_edit,   bg='#FF9800', fg='black', **btn_cfg).pack(side=tk.LEFT, padx=2)
-        tk.Button(btn_frame, text="삭제",   command=self._on_delete, bg='#F44336', fg='black', **btn_cfg).pack(side=tk.LEFT, padx=2)
-        tk.Button(btn_frame, text="전체삭제", command=self._on_clear, bg='#9E9E9E', fg='black', **btn_cfg).pack(side=tk.LEFT, padx=2)
+        btn_cfg = dict(bg='#e8e8e8', fg='#333333', font=('Arial', 9),
+                       relief=tk.GROOVE, borderwidth=1, width=10)
+        tk.Button(btn_frame, text="추가",     command=self._on_add,    **btn_cfg).pack(side=tk.LEFT, padx=2)
+        tk.Button(btn_frame, text="수정",     command=self._on_edit,   **btn_cfg).pack(side=tk.LEFT, padx=2)
+        tk.Button(btn_frame, text="삭제",     command=self._on_delete, **btn_cfg).pack(side=tk.LEFT, padx=2)
+        tk.Button(btn_frame, text="전체삭제", command=self._on_clear,  **btn_cfg).pack(side=tk.LEFT, padx=2)
 
         # 패턴 수 표시
         self._count_label = tk.Label(btn_frame, text="패턴: 0개", font=('Arial', 9),
@@ -251,11 +252,11 @@ class PatternEditDialog(tk.Toplevel):
 
         # 버튼
         btn_row = type_row + 1
-        tk.Button(frm, text="확인", command=self._on_ok,
-                  bg='#4CAF50', fg='black', font=('Arial', 10, 'bold'), width=10).grid(
+        _BTN = dict(bg='#e8e8e8', fg='#333333', font=('Arial', 10),
+                    relief=tk.GROOVE, borderwidth=1, width=10)
+        tk.Button(frm, text="확인", command=self._on_ok,     **_BTN).grid(
             row=btn_row, column=0, columnspan=2, pady=10)
-        tk.Button(frm, text="취소", command=self.destroy,
-                  bg='#9E9E9E', fg='black', font=('Arial', 10, 'bold'), width=10).grid(
+        tk.Button(frm, text="취소", command=self.destroy,    **_BTN).grid(
             row=btn_row, column=2, columnspan=2, pady=10)
 
         frm.grid_columnconfigure(1, weight=1)

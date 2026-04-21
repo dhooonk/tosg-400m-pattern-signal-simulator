@@ -33,20 +33,21 @@ class MultiRemotePanel(tk.Frame):
 
     # ──────────────────────────────────────────────────────────
     def _setup_ui(self):
+        _BTN = dict(bg='#e8e8e8', fg='#333333', relief=tk.GROOVE, borderwidth=1)
+
         # ── 상단: MRT 그룹 관리 버튼 ─────────────────────────
         top_btn = tk.Frame(self, bg='#f0f0f0')
         top_btn.pack(side=tk.TOP, fill=tk.X, padx=5, pady=3)
 
         tk.Label(top_btn, text="MULTIREMOTE 설정",
-                 font=('Arial', 11, 'bold'), bg='#f0f0f0').pack(side=tk.LEFT)
+                 font=('Arial', 12, 'bold'), bg='#f0f0f0').pack(side=tk.LEFT)
 
-        for text, cmd, color in [
-            ("MRT 추가", self._on_add_mrt,    '#4CAF50'),
-            ("MRT 삭제", self._on_delete_mrt, '#F44336'),
+        for text, cmd in [
+            ("MRT 추가", self._on_add_mrt),
+            ("MRT 삭제", self._on_delete_mrt),
         ]:
             tk.Button(top_btn, text=text, command=cmd,
-                      bg=color, fg='black', font=('Arial', 9),
-                      relief=tk.RAISED, borderwidth=2, width=9).pack(
+                      font=('Arial', 9), width=9, **_BTN).pack(
                 side=tk.RIGHT, padx=2)
 
         # ── 좌우 분할 ────────────────────────────────────────
@@ -57,9 +58,9 @@ class MultiRemotePanel(tk.Frame):
         left_frame = tk.LabelFrame(pw, text="MRT 목록",
                                    font=('Arial', 10, 'bold'),
                                    bg='#f0f0f0')
-        self._mrt_listbox = tk.Listbox(left_frame, font=('Consolas', 9),
-                                       bg='white', selectbackground='#2980b9',
-                                       selectforeground='white')
+        self._mrt_listbox = tk.Listbox(left_frame, font=('Arial', 9),
+                                       bg='white', selectbackground='#aaaaaa',
+                                       selectforeground='#111111')
         vsb1 = ttk.Scrollbar(left_frame, command=self._mrt_listbox.yview)
         self._mrt_listbox.configure(yscrollcommand=vsb1.set)
         self._mrt_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -69,47 +70,47 @@ class MultiRemotePanel(tk.Frame):
 
         # ── 우: MRT 항목 편집 ────────────────────────────────
         right_frame = tk.Frame(pw, bg='#f0f0f0')
-        pw.add(right_frame, weight=3)
+        pw.add(right_frame, weight=4)
 
         # 이름 편집 행
         name_row = tk.Frame(right_frame, bg='#f0f0f0')
         name_row.pack(side=tk.TOP, fill=tk.X, padx=4, pady=4)
-        tk.Label(name_row, text="MRT 이름:", font=('Arial', 9),
+        tk.Label(name_row, text="MRT 이름:", font=('Arial', 10),
                  bg='#f0f0f0').pack(side=tk.LEFT)
         self._mrt_name_var = tk.StringVar()
         self._mrt_name_entry = tk.Entry(name_row, textvariable=self._mrt_name_var,
                                         width=25, font=('Arial', 9))
         self._mrt_name_entry.pack(side=tk.LEFT, padx=4)
         tk.Button(name_row, text="이름 저장", command=self._on_save_name,
-                  bg='#FF9800', fg='black', font=('Arial', 9),
-                  relief=tk.RAISED, borderwidth=2).pack(side=tk.LEFT)
+                  font=('Arial', 9), **_BTN).pack(side=tk.LEFT)
 
         # 항목 버튼
         entry_btn = tk.Frame(right_frame, bg='#f0f0f0')
         entry_btn.pack(side=tk.TOP, fill=tk.X, padx=4, pady=2)
-        for text, cmd, color in [
-            ("항목 추가", self._on_add_entry,    '#4CAF50'),
-            ("항목 수정", self._on_edit_entry,   '#FF9800'),
-            ("항목 삭제", self._on_delete_entry, '#F44336'),
-            ("↑ 위로",   self._on_move_up,      '#607D8B'),
-            ("↓ 아래로", self._on_move_down,     '#607D8B'),
+        for text, cmd in [
+            ("항목 추가", self._on_add_entry),
+            ("항목 수정", self._on_edit_entry),
+            ("항목 삭제", self._on_delete_entry),
+            ("↑ 위로",   self._on_move_up),
+            ("↓ 아래로", self._on_move_down),
         ]:
             tk.Button(entry_btn, text=text, command=cmd,
-                      bg=color, fg='black', font=('Arial', 8),
-                      relief=tk.RAISED, borderwidth=2, width=8).pack(
+                      font=('Arial', 9), width=8, **_BTN).pack(
                 side=tk.LEFT, padx=2)
 
-        # 항목 테이블
+        # 항목 테이블 (순서, Model번호, Model이름, Pattern번호, Pattern이름, Time)
         self._entry_tree = ttk.Treeview(
             right_frame,
-            columns=('seq', 'model', 'ptn', 'time'),
+            columns=('seq', 'model', 'model_name', 'ptn', 'ptn_name', 'time'),
             show='headings', height=15
         )
         for col, label, w in [
-            ('seq',   '순서',       60),
-            ('model', 'Model 번호', 100),
-            ('ptn',   'Pattern No', 100),
-            ('time',  'Time',        80),
+            ('seq',        '순서',          55),
+            ('model',      'Model 번호',    75),
+            ('model_name', 'Model 이름',   140),
+            ('ptn',        'Pattern 번호',  75),
+            ('ptn_name',   'Pattern 이름', 140),
+            ('time',       'Time',          65),
         ]:
             self._entry_tree.heading(col, text=label)
             self._entry_tree.column(col, width=w, anchor='center')
@@ -124,7 +125,7 @@ class MultiRemotePanel(tk.Frame):
                                    font=('Arial', 9), bg='#f0f0f0')
         info_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=4, pady=4)
         self._model_info_text = tk.Text(info_frame, height=6, width=40,
-                                        font=('Consolas', 8), state='disabled',
+                                        font=('Arial', 9), state='disabled',
                                         bg='#fafafa')
         self._model_info_text.pack(fill=tk.X)
 
@@ -150,8 +151,20 @@ class MultiRemotePanel(tk.Frame):
         for row in self._entry_tree.get_children():
             self._entry_tree.delete(row)
         for e in grp.entries:
-            self._entry_tree.insert('', 'end',
-                values=(f"MRT{e.seq:02d}", e.model_num, e.ptn_no, e.time))
+            model_name = ''
+            ptn_name = ''
+            for m in self.model_store.models:
+                if str(m.model_num) == str(e.model_num):
+                    model_name = m.name
+                    for p in m.patterns:
+                        p_no = p.get('ptn_no', 0) if isinstance(p, dict) else 0
+                        if int(p_no) == e.ptn_no:
+                            ptn_name = p.get('name', '') if isinstance(p, dict) else ''
+                    break
+            self._entry_tree.insert('', 'end', values=(
+                f"MRT{e.seq:02d}", e.model_num, model_name,
+                e.ptn_no, ptn_name, e.time
+            ))
 
     def _refresh_model_info(self):
         self._model_info_text.configure(state='normal')
@@ -337,12 +350,11 @@ class MrtEntryDialog(tk.Toplevel):
         self._update_pattern_name()
 
         # 버튼
+        _BTN = dict(bg='#e8e8e8', fg='#333333', relief=tk.GROOVE, borderwidth=1)
         tk.Button(frm, text="확인", command=self._ok,
-                  bg='#4CAF50', fg='black', font=('Arial', 10, 'bold'),
-                  width=10).grid(row=4, column=0, pady=10)
+                  font=('Arial', 10), width=10, **_BTN).grid(row=4, column=0, pady=10)
         tk.Button(frm, text="취소", command=self.destroy,
-                  bg='#9E9E9E', fg='black', font=('Arial', 10, 'bold'),
-                  width=10).grid(row=4, column=1, pady=10)
+                  font=('Arial', 10), width=10, **_BTN).grid(row=4, column=1, pady=10)
 
         self.transient(parent)
         self.grab_set()

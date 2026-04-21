@@ -14,7 +14,7 @@ OTD 포맷 구조 (수정된 형식):
   103=SYNCDATA,...
   104=SYNCCNTR,...
   [SIGNAL_DATA_XXX]       ← MODEL과 띄움 없이 바로
-  201-S01=...
+  201=S01,...
   ...
   [PATTERN_DATA_XXX]      ← SIGNAL_DATA와 띄움 없이 바로
   401=PTN01,...
@@ -190,8 +190,12 @@ class OtdExporter:
                     lines.append(self._format_signal_line(sig_idx, sig))
 
                 # [PATTERN_DATA_XXX]: 바로 이어서 (빈줄 없음)
+                # 항상 PTN01~PTN15 (401~415) 15개 전부 저장
                 lines.append(f'[PATTERN_DATA_{model_num}]')
-                for ptn_idx, ptn in enumerate(patterns, 1):
+                ptn_by_no = {ptn.get('ptn_no', i + 1): ptn
+                             for i, ptn in enumerate(patterns)}
+                for ptn_idx in range(1, 16):
+                    ptn = ptn_by_no.get(ptn_idx, {})
                     lines.append(self._format_pattern_line(ptn_idx, ptn))
 
                 # 999=END-MODEL_XXX: 마지막 PTN 바로 다음 (빈줄 없음)
@@ -215,11 +219,17 @@ class OtdExporter:
                     lines.append(f'[MULTIREMOTE_{grp.mrt_no}]')
                     # 501=MRT,번호,이름 형식 (피드백 7번)
                     lines.append(f"501=MRT,{grp.mrt_no},{grp.name}")
-                    for entry in grp.entries:
-                        lines.append(
-                            f"6{entry.seq:02d}=MRT{entry.seq:02d},"
-                            f"{entry.model_num},{entry.ptn_no},{entry.time}"
-                        )
+                    # 항상 MRT01~MRT30 (601~630) 30개 전부 저장
+                    entry_by_seq = {e.seq: e for e in grp.entries}
+                    for seq in range(1, 31):
+                        if seq in entry_by_seq:
+                            e = entry_by_seq[seq]
+                            lines.append(
+                                f"6{seq:02d}=MRT{seq:02d},"
+                                f"{e.model_num},{e.ptn_no},{e.time}"
+                            )
+                        else:
+                            lines.append(f"6{seq:02d}=MRT{seq:02d},0,0,0")
                     # 각 MULTIREMOTE 블록 끝에 999=END 추가 (피드백 8번)
                     lines.append("999=END")
                     # 다음 MULTIREMOTE 블록은 바로 이어서 (빈줄 없음, 피드백 9번)
@@ -243,11 +253,11 @@ class OtdExporter:
         """
         신호 딕셔너리를 OTD SIGNAL_DATA 라인 형식으로 변환
 
-        OTD 포맷: 2XX-SYY=NUM,NAME,V1,V2,V3,V4,DELAY,WIDTH,PERIOD,LENGTH,AREA,MF,MOD,INV,TYPE
+        OTD 포맷: 2XX=SYY,NAME,V1,V2,V3,V4,DELAY,WIDTH,PERIOD,LENGTH,AREA,MF,MOD,INV,TYPE
         단위 변환: 전압 V→mV, 시간 us→1/10us
         """
         num_str = sig.get('num', f'S{idx:02d}')
-        name    = sig.get('name', f'Signal{idx}')
+        name    = sig.get('name', '')
         v1 = _v_to_mv(float(sig.get('v1', 0)))
         v2 = _v_to_mv(float(sig.get('v2', 0)))
         v3 = _v_to_mv(float(sig.get('v3', 0)))
@@ -264,8 +274,8 @@ class OtdExporter:
             sig_type = int(sig.get('sig_type', '0'))
         except (ValueError, TypeError):
             sig_type = 0
-        line_key = f"2{idx:02d}-{num_str}"
-        return (f"{line_key}={name},{v1},{v2},{v3},{v4},"
+        line_key = f"2{idx:02d}"
+        return (f"{line_key}={num_str},{name},{v1},{v2},{v3},{v4},"
                 f"{delay},{width},{period},{length},{area},"
                 f"{mf},{mod},{inv},{sig_type}")
 

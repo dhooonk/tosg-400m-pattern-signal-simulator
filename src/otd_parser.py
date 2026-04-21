@@ -423,7 +423,7 @@ class OtdParser:
         """
         SIGNAL_DATA 라인 파싱
         
-        포맷: 201-S01=GND,0,0,0,0,0,0,0,0,0,0,0,0,0
+        포맷: 201=S01,GND,0,0,0,0,0,0,0,0,0,0,0,0,0
         컬럼 (value 기준): NUM, NAME, V1, V2, V3, V4, DELAY, WIDTH, PERIOD, LENGTH, AREA, MF, MOD, INV, [TYPE]
         단위: 전압=mV, 시간=1/10us
         """

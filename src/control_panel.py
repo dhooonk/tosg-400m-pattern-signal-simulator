@@ -69,7 +69,7 @@ class ControlPanel(tk.Frame):
         sec1.pack(side=tk.LEFT, fill=tk.Y, padx=(6, 0), pady=4)
 
         tk.Label(sec1, text="뷰 제어", bg=section_bg, fg='#555555',
-                 font=('Arial', 7, 'bold')).pack(anchor='w', padx=4, pady=(2, 0))
+                 font=('Arial', 8, 'bold')).pack(anchor='w', padx=4, pady=(2, 0))
 
         row1 = tk.Frame(sec1, bg=section_bg)
         row1.pack(side=tk.TOP, fill=tk.X, padx=4, pady=(0, 4))
@@ -106,15 +106,15 @@ class ControlPanel(tk.Frame):
         sec2.pack(side=tk.LEFT, fill=tk.Y, padx=0, pady=4)
 
         tk.Label(sec2, text="기타 설정", bg=section_bg, fg='#555555',
-                 font=('Arial', 7, 'bold')).pack(anchor='w', padx=4, pady=(2, 0))
+                 font=('Arial', 8, 'bold')).pack(anchor='w', padx=4, pady=(2, 0))
 
         row2 = tk.Frame(sec2, bg=section_bg)
         row2.pack(side=tk.TOP, fill=tk.X, padx=4, pady=(0, 4))
 
         # 그리드 토글
         tk.Button(row2, text="그리드", command=self._on_toggle_grid,
-                  bg='#d0d0d0', fg='#333333', font=('Arial', 8, 'bold'),
-                  relief=tk.RAISED, bd=1, padx=5, pady=2).pack(side=tk.LEFT, padx=(0, 6))
+                  bg='#e8e8e8', fg='#333333', font=('Arial', 8),
+                  relief=tk.GROOVE, bd=1, padx=5, pady=2).pack(side=tk.LEFT, padx=(0, 6))
 
         # 뷰 모드
         tk.Label(row2, text="보기:", **label_kw).pack(side=tk.LEFT)
@@ -143,24 +143,24 @@ class ControlPanel(tk.Frame):
         sec3.pack(side=tk.LEFT, fill=tk.Y, padx=0, pady=4)
 
         tk.Label(sec3, text="OTD / Excel", bg=section_bg, fg='#555555',
-                 font=('Arial', 7, 'bold')).pack(anchor='w', padx=4, pady=(2, 0))
+                 font=('Arial', 8, 'bold')).pack(anchor='w', padx=4, pady=(2, 0))
 
         row3 = tk.Frame(sec3, bg=section_bg)
         row3.pack(side=tk.TOP, fill=tk.X, padx=4, pady=(0, 4))
 
         btn_data = [
-            ("OTD 불러오기",       self._on_load_otd,              '#5a8a5a', '#ffffff'),
-            ("Excel 불러오기",     self._on_load_excel,            '#5a7a9a', '#ffffff'),
-            ("OTD 내보내기",       self._on_export_otd,            '#8a7a5a', '#ffffff'),
-            ("Excel 데이터 내보내기", self._on_export_excel,        '#5a8a8a', '#ffffff'),
-            ("Excel 파형 내보내기",  self._on_export_excel_waveform, '#7a5a9a', '#ffffff'),
-            ("포맷 생성",          self._on_create_format,         '#7a7a7a', '#ffffff'),
+            ("OTD 불러오기",         self._on_load_otd),
+            ("Excel 불러오기",       self._on_load_excel),
+            ("OTD 내보내기",         self._on_export_otd),
+            ("Excel 데이터 내보내기", self._on_export_excel),
+            ("Excel 파형 내보내기",   self._on_export_excel_waveform),
+            ("포맷 생성",            self._on_create_format),
         ]
-        for text, cmd, bg_color, fg_color in btn_data:
+        for text, cmd in btn_data:
             tk.Button(row3, text=text, command=cmd,
-                      bg=bg_color, fg=fg_color,
-                      font=('Arial', 8, 'bold'),
-                      relief=tk.RAISED, bd=1, padx=6, pady=3,
+                      bg='#e8e8e8', fg='#333333',
+                      font=('Arial', 8),
+                      relief=tk.GROOVE, bd=1, padx=6, pady=3,
                       cursor='hand2').pack(side=tk.LEFT, padx=2)
 
     # ──────────────────────────────────────────────────────────────

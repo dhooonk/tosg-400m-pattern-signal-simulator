@@ -43,29 +43,17 @@ class SignalTableWidget(tk.Frame):
         btn_frame.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
         
         # CRUD 버튼 생성
-        tk.Button(btn_frame, text="신호 추가", command=self._on_add,
-                 bg='#4CAF50', fg='black', font=('Arial', 10, 'bold'),
-                 relief=tk.RAISED, borderwidth=2).pack(side=tk.LEFT, padx=2)
-        tk.Button(btn_frame, text="신호 수정", command=self._on_edit,
-                 bg='#2196F3', fg='black', font=('Arial', 10, 'bold'),
-                 relief=tk.RAISED, borderwidth=2).pack(side=tk.LEFT, padx=2)
-        tk.Button(btn_frame, text="신호 복제", command=self._on_duplicate,
-                 bg='#FF9800', fg='black', font=('Arial', 10, 'bold'),
-                 relief=tk.RAISED, borderwidth=2).pack(side=tk.LEFT, padx=2)
-        tk.Button(btn_frame, text="신호 삭제", command=self._on_delete,
-                 bg='#f44336', fg='black', font=('Arial', 10, 'bold'),
-                 relief=tk.RAISED, borderwidth=2).pack(side=tk.LEFT, padx=2)
-        tk.Button(btn_frame, text="전체 삭제", command=self._on_clear,
-                 bg='#9E9E9E', fg='black', font=('Arial', 10, 'bold'),
-                 relief=tk.RAISED, borderwidth=2).pack(side=tk.LEFT, padx=2)
-        
+        _BTN = dict(bg='#e8e8e8', fg='#333333', font=('Arial', 9),
+                    relief=tk.GROOVE, borderwidth=1)
+        tk.Button(btn_frame, text="신호 추가", command=self._on_add,    **_BTN).pack(side=tk.LEFT, padx=2)
+        tk.Button(btn_frame, text="신호 수정", command=self._on_edit,   **_BTN).pack(side=tk.LEFT, padx=2)
+        tk.Button(btn_frame, text="신호 복제", command=self._on_duplicate, **_BTN).pack(side=tk.LEFT, padx=2)
+        tk.Button(btn_frame, text="신호 삭제", command=self._on_delete,  **_BTN).pack(side=tk.LEFT, padx=2)
+        tk.Button(btn_frame, text="전체 삭제", command=self._on_clear,   **_BTN).pack(side=tk.LEFT, padx=2)
+
         # 순서 변경 버튼
-        tk.Button(btn_frame, text="위로 ↑", command=self._on_move_up,
-                 bg='#9C27B0', fg='black', font=('Arial', 10, 'bold'),
-                 relief=tk.RAISED, borderwidth=2).pack(side=tk.LEFT, padx=2)
-        tk.Button(btn_frame, text="아래로 ↓", command=self._on_move_down,
-                 bg='#9C27B0', fg='black', font=('Arial', 10, 'bold'),
-                 relief=tk.RAISED, borderwidth=2).pack(side=tk.LEFT, padx=2)
+        tk.Button(btn_frame, text="위로 ↑",   command=self._on_move_up,   **_BTN).pack(side=tk.LEFT, padx=2)
+        tk.Button(btn_frame, text="아래로 ↓", command=self._on_move_down, **_BTN).pack(side=tk.LEFT, padx=2)
         
         # 테이블 프레임
         table_frame = tk.Frame(self, bg='white')
