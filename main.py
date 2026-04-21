@@ -176,13 +176,21 @@ class MainApplication(tk.Tk):
         self.model_list_panel.timing_viewer      = self.timing_viewer
         self.model_list_panel.pattern_data_panel = self.pattern_panel
 
-        # ── 하단: 상태 표시줄 ─────────────────────────────────────
+        # ── 하단: 상태 표시줄 + 문의사항 ────────────────────────────
+        bottom_frame = tk.Frame(self, bg='#d8d8d8')
+        bottom_frame.pack(side=tk.BOTTOM, fill=tk.X)
+
         self.statusbar = tk.Label(
-            self, text="준비", bd=1, relief=tk.SUNKEN,
+            bottom_frame, text="준비", bd=0,
             anchor=tk.W, font=('Arial', 9),
             bg='#d8d8d8', fg='#000'
         )
-        self.statusbar.pack(side=tk.BOTTOM, fill=tk.X)
+        self.statusbar.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=4, pady=2)
+
+        tk.Label(
+            bottom_frame, text="문의사항 : dhooonk@lgdisplay.com",
+            font=('Arial', 8), bg='#d8d8d8', fg='#555555'
+        ).pack(side=tk.RIGHT, padx=10, pady=2)
 
         # 상태 표시줄: signal_manager와 model_store 변경 시 갱신
         self.signal_manager.add_listener(self._update_status)

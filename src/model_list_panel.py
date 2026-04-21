@@ -19,6 +19,16 @@ import tkinter as tk
 from tkinter import ttk
 
 
+def _is_zero_signal(sig) -> bool:
+    """신호의 모든 전압/타이밍 값이 0인지 확인 (편집되지 않은 빈 신호)"""
+    return (
+        getattr(sig, 'v1', 0) == 0 and getattr(sig, 'v2', 0) == 0 and
+        getattr(sig, 'v3', 0) == 0 and getattr(sig, 'v4', 0) == 0 and
+        getattr(sig, 'delay', 0) == 0 and getattr(sig, 'width', 0) == 0 and
+        getattr(sig, 'period', 0) == 0
+    )
+
+
 class ModelListPanel(tk.Frame):
     """
     좌측 모델 선택 패널
@@ -74,7 +84,7 @@ class ModelListPanel(tk.Frame):
         header = tk.Label(
             self, text="MODEL LIST",
             font=('Arial', 10, 'bold'),
-            bg='#2c3e50', fg='white', pady=6
+            bg='#666666', fg='white', pady=6
         )
         header.pack(side=tk.TOP, fill=tk.X)
 
@@ -169,9 +179,14 @@ class ModelListPanel(tk.Frame):
         self.signal_manager.clear_signals()
         for sig in model.signals:
             if isinstance(sig, Signal):
+                if _is_zero_signal(sig):
+                    sig.visible = False
                 self.signal_manager.add_signal(sig)
             elif isinstance(sig, dict):
-                self.signal_manager.add_signal(Signal.from_dict(sig))
+                s = Signal.from_dict(sig)
+                if _is_zero_signal(s):
+                    s.visible = False
+                self.signal_manager.add_signal(s)
 
         # ── 패턴 데이터 갱신 ──────────────────────────────────────
         if self.pattern_data_panel is not None:

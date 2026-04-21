@@ -40,7 +40,7 @@ class ControlPanel(tk.Frame):
 
     def __init__(self, parent, sync_data_manager, timing_viewer, signal_manager,
                  signal_storage, pattern_data_panel=None, model_store=None):
-        super().__init__(parent, bg='#2c3e50')
+        super().__init__(parent, bg='#f0f0f0')
 
         self.sync_data_manager  = sync_data_manager
         self.timing_viewer      = timing_viewer
@@ -55,45 +55,37 @@ class ControlPanel(tk.Frame):
         """UI 구성 — 1줄 컴팩트 Toolbar"""
 
         # ── 공통 스타일 ───────────────────────────────────────────
-        toolbar_bg   = '#2c3e50'
-        section_bg   = '#34495e'
-        label_kw     = dict(bg=toolbar_bg, fg='#ecf0f1', font=('Arial', 8))
-        sep_kw       = dict(bg='#4a6278', width=2)
+        toolbar_bg   = '#f0f0f0'
+        section_bg   = '#e8e8e8'
+        label_kw     = dict(bg=section_bg, fg='#333333', font=('Arial', 8))
+        sep_kw       = dict(bg='#cccccc', width=1)
 
         def _sep():
             """수직 구분선"""
             tk.Frame(self, **sep_kw).pack(side=tk.LEFT, fill=tk.Y, padx=4, pady=4)
 
-        def _btn(parent, text, cmd, color, w=10):
-            return tk.Button(parent, text=text, command=cmd,
-                             bg=color, fg='black',
-                             font=('Arial', 8, 'bold'),
-                             relief=tk.FLAT, borderwidth=0,
-                             padx=6, pady=3, width=w,
-                             cursor='hand2')
-
         # ── 섹션 1: 뷰 제어 ──────────────────────────────────────
-        sec1 = tk.Frame(self, bg=section_bg, relief=tk.FLAT)
+        sec1 = tk.Frame(self, bg=section_bg, relief=tk.GROOVE, bd=1)
         sec1.pack(side=tk.LEFT, fill=tk.Y, padx=(6, 0), pady=4)
 
-        tk.Label(sec1, text="▶ 뷰 제어", bg=section_bg, fg='#bdc3c7',
+        tk.Label(sec1, text="뷰 제어", bg=section_bg, fg='#555555',
                  font=('Arial', 7, 'bold')).pack(anchor='w', padx=4, pady=(2, 0))
 
         row1 = tk.Frame(sec1, bg=section_bg)
         row1.pack(side=tk.TOP, fill=tk.X, padx=4, pady=(0, 4))
 
         # 프레임 수
-        tk.Label(row1, text="프레임:", **{**label_kw, 'bg': section_bg}).pack(side=tk.LEFT)
+        tk.Label(row1, text="프레임:", **label_kw).pack(side=tk.LEFT)
         self.frame_spinbox = tk.Spinbox(row1, from_=1, to=10,
                                          font=('Arial', 8), width=3,
                                          command=self._on_frame_changed,
-                                         bg='#ecf0f1')
+                                         bg='#ffffff')
         self.frame_spinbox.delete(0, tk.END)
         self.frame_spinbox.insert(0, '2')
         self.frame_spinbox.pack(side=tk.LEFT, padx=(2, 8))
 
         # X축 모드
-        tk.Label(row1, text="X축:", **{**label_kw, 'bg': section_bg}).pack(side=tk.LEFT)
+        tk.Label(row1, text="X축:", **label_kw).pack(side=tk.LEFT)
         self.x_axis_mode_var = tk.StringVar(value="frame")
         ttk.Radiobutton(row1, text="Frame", variable=self.x_axis_mode_var,
                         value="frame", command=self._on_x_axis_mode_changed).pack(side=tk.LEFT)
@@ -101,8 +93,8 @@ class ControlPanel(tk.Frame):
                         value="time", command=self._on_x_axis_mode_changed).pack(side=tk.LEFT)
 
         # 뷰 시간
-        tk.Label(row1, text=" 시간(us):", **{**label_kw, 'bg': section_bg}).pack(side=tk.LEFT)
-        self.view_time_entry = tk.Entry(row1, font=('Arial', 8), width=6, bg='#ecf0f1')
+        tk.Label(row1, text=" 시간(us):", **label_kw).pack(side=tk.LEFT)
+        self.view_time_entry = tk.Entry(row1, font=('Arial', 8), width=6, bg='#ffffff')
         self.view_time_entry.pack(side=tk.LEFT, padx=(2, 0))
         self.view_time_entry.bind('<Return>',   self._on_view_time_changed)
         self.view_time_entry.bind('<FocusOut>', self._on_view_time_changed)
@@ -110,10 +102,10 @@ class ControlPanel(tk.Frame):
         _sep()
 
         # ── 섹션 2: 기타 설정 ────────────────────────────────────
-        sec2 = tk.Frame(self, bg=section_bg, relief=tk.FLAT)
+        sec2 = tk.Frame(self, bg=section_bg, relief=tk.GROOVE, bd=1)
         sec2.pack(side=tk.LEFT, fill=tk.Y, padx=0, pady=4)
 
-        tk.Label(sec2, text="▶ 기타 설정", bg=section_bg, fg='#bdc3c7',
+        tk.Label(sec2, text="기타 설정", bg=section_bg, fg='#555555',
                  font=('Arial', 7, 'bold')).pack(anchor='w', padx=4, pady=(2, 0))
 
         row2 = tk.Frame(sec2, bg=section_bg)
@@ -121,11 +113,11 @@ class ControlPanel(tk.Frame):
 
         # 그리드 토글
         tk.Button(row2, text="그리드", command=self._on_toggle_grid,
-                  bg='#e67e22', fg='white', font=('Arial', 8, 'bold'),
-                  relief=tk.FLAT, padx=5, pady=2).pack(side=tk.LEFT, padx=(0, 6))
+                  bg='#d0d0d0', fg='#333333', font=('Arial', 8, 'bold'),
+                  relief=tk.RAISED, bd=1, padx=5, pady=2).pack(side=tk.LEFT, padx=(0, 6))
 
         # 뷰 모드
-        tk.Label(row2, text="보기:", **{**label_kw, 'bg': section_bg}).pack(side=tk.LEFT)
+        tk.Label(row2, text="보기:", **label_kw).pack(side=tk.LEFT)
         self.view_mode_var = tk.StringVar(value="separate")
         ttk.Radiobutton(row2, text="개별", variable=self.view_mode_var,
                         value="separate", command=self._on_view_mode_changed).pack(side=tk.LEFT)
@@ -133,7 +125,7 @@ class ControlPanel(tk.Frame):
                         value="combined", command=self._on_view_mode_changed).pack(side=tk.LEFT)
 
         # 범례 위치
-        tk.Label(row2, text=" 범례:", **{**label_kw, 'bg': section_bg}).pack(side=tk.LEFT)
+        tk.Label(row2, text=" 범례:", **label_kw).pack(side=tk.LEFT)
         self.legend_combo = ttk.Combobox(row2, font=('Arial', 8),
                                          state='readonly', width=10)
         self.legend_combo['values'] = [
@@ -147,28 +139,28 @@ class ControlPanel(tk.Frame):
         _sep()
 
         # ── 섹션 3: OTD / Excel I/O ──────────────────────────────
-        sec3 = tk.Frame(self, bg=section_bg, relief=tk.FLAT)
+        sec3 = tk.Frame(self, bg=section_bg, relief=tk.GROOVE, bd=1)
         sec3.pack(side=tk.LEFT, fill=tk.Y, padx=0, pady=4)
 
-        tk.Label(sec3, text="▶ OTD / Excel", bg=section_bg, fg='#bdc3c7',
+        tk.Label(sec3, text="OTD / Excel", bg=section_bg, fg='#555555',
                  font=('Arial', 7, 'bold')).pack(anchor='w', padx=4, pady=(2, 0))
 
         row3 = tk.Frame(sec3, bg=section_bg)
         row3.pack(side=tk.TOP, fill=tk.X, padx=4, pady=(0, 4))
 
         btn_data = [
-            ("OTD 불러오기",    self._on_load_otd,                '#27ae60'),
-            ("Excel 불러오기",  self._on_load_excel,              '#2980b9'),
-            ("OTD 내보내기",    self._on_export_otd,              '#e67e22'),
-            ("Excel 파형",      self._on_export_excel_waveform,   '#8e44ad'),
-            ("포맷 생성",       self._on_create_format,           '#607D8B'),
-            ("Excel 데이터",    self._on_export_excel,            '#00838f'),
+            ("OTD 불러오기",       self._on_load_otd,              '#5a8a5a', '#ffffff'),
+            ("Excel 불러오기",     self._on_load_excel,            '#5a7a9a', '#ffffff'),
+            ("OTD 내보내기",       self._on_export_otd,            '#8a7a5a', '#ffffff'),
+            ("Excel 데이터 내보내기", self._on_export_excel,        '#5a8a8a', '#ffffff'),
+            ("Excel 파형 내보내기",  self._on_export_excel_waveform, '#7a5a9a', '#ffffff'),
+            ("포맷 생성",          self._on_create_format,         '#7a7a7a', '#ffffff'),
         ]
-        for text, cmd, color in btn_data:
+        for text, cmd, bg_color, fg_color in btn_data:
             tk.Button(row3, text=text, command=cmd,
-                      bg=color, fg='white',
+                      bg=bg_color, fg=fg_color,
                       font=('Arial', 8, 'bold'),
-                      relief=tk.FLAT, padx=6, pady=3,
+                      relief=tk.RAISED, bd=1, padx=6, pady=3,
                       cursor='hand2').pack(side=tk.LEFT, padx=2)
 
     # ──────────────────────────────────────────────────────────────
@@ -747,8 +739,7 @@ class ControlPanel(tk.Frame):
         thin_border = Border(left=side(), right=side(), top=side(), bottom=side())
 
         # 헤더
-        for col_idx, label in enumerate(['Model', 'Name', 'Freq (Hz)', 'SyncData (us)',
-                                          '신호 수', '패턴 수'], 1):
+        for col_idx, label in enumerate(['Model', 'Name', 'Freq (Hz)', 'SyncData (us)'], 1):
             cell = ws_info.cell(row=1, column=col_idx, value=label)
             cell.font      = info_font
             cell.fill      = info_fill
@@ -761,15 +752,13 @@ class ControlPanel(tk.Frame):
                 md.name,
                 round(md.frequency_hz, 2),
                 md.sync_data_us,
-                len(md.signals),
-                len(md.patterns),
             ]
             for col_idx, val in enumerate(vals, 1):
                 c = ws_info.cell(row=row_offset, column=col_idx, value=val)
                 c.border    = thin_border
                 c.alignment = center
 
-        for col in ['A', 'B', 'C', 'D', 'E', 'F']:
+        for col in ['A', 'B', 'C', 'D']:
             ws_info.column_dimensions[col].width = 16
 
     def _export_current_signals_to_excel(self):

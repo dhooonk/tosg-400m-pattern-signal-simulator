@@ -299,20 +299,31 @@ class MrtEntryDialog(tk.Toplevel):
         self._model_combo.grid(row=0, column=1, pady=4, padx=4)
         if model_opts:
             self._model_combo.current(0)
+        self._model_combo.bind('<<ComboboxSelected>>', self._on_model_or_ptn_changed)
 
         # Pattern No
         tk.Label(frm, text="Pattern No:", font=('Arial', 10)).grid(
             row=1, column=0, sticky='e', pady=4, padx=4)
         self._ptn_var = tk.IntVar(value=1)
-        tk.Spinbox(frm, from_=1, to=99, textvariable=self._ptn_var,
-                   width=8).grid(row=1, column=1, sticky='w', pady=4, padx=4)
+        ptn_spinbox = tk.Spinbox(frm, from_=1, to=99, textvariable=self._ptn_var,
+                                  width=8, command=self._on_model_or_ptn_changed)
+        ptn_spinbox.grid(row=1, column=1, sticky='w', pady=4, padx=4)
+        ptn_spinbox.bind('<KeyRelease>', self._on_model_or_ptn_changed)
+
+        # 패턴 이름 표시 라벨
+        tk.Label(frm, text="패턴 이름:", font=('Arial', 10)).grid(
+            row=2, column=0, sticky='e', pady=4, padx=4)
+        self._ptn_name_var = tk.StringVar(value="—")
+        tk.Label(frm, textvariable=self._ptn_name_var,
+                 font=('Arial', 10, 'bold'), fg='#1a5fa8',
+                 width=20, anchor='w').grid(row=2, column=1, sticky='w', pady=4, padx=4)
 
         # Time
         tk.Label(frm, text="Time:", font=('Arial', 10)).grid(
-            row=2, column=0, sticky='e', pady=4, padx=4)
+            row=3, column=0, sticky='e', pady=4, padx=4)
         self._time_var = tk.IntVar(value=0)
         tk.Spinbox(frm, from_=0, to=99999, textvariable=self._time_var,
-                   width=8).grid(row=2, column=1, sticky='w', pady=4, padx=4)
+                   width=8).grid(row=3, column=1, sticky='w', pady=4, padx=4)
 
         # 기존 값 로드
         if entry:
@@ -323,16 +334,42 @@ class MrtEntryDialog(tk.Toplevel):
             self._ptn_var.set(entry.ptn_no)
             self._time_var.set(entry.time)
 
+        self._update_pattern_name()
+
         # 버튼
         tk.Button(frm, text="확인", command=self._ok,
                   bg='#4CAF50', fg='black', font=('Arial', 10, 'bold'),
-                  width=10).grid(row=3, column=0, pady=10)
+                  width=10).grid(row=4, column=0, pady=10)
         tk.Button(frm, text="취소", command=self.destroy,
                   bg='#9E9E9E', fg='black', font=('Arial', 10, 'bold'),
-                  width=10).grid(row=3, column=1, pady=10)
+                  width=10).grid(row=4, column=1, pady=10)
 
         self.transient(parent)
         self.grab_set()
+
+    def _on_model_or_ptn_changed(self, event=None):
+        self._update_pattern_name()
+
+    def _update_pattern_name(self):
+        """선택된 Model과 Pattern No에 해당하는 패턴 이름을 표시"""
+        model_idx = self._model_combo.current()
+        if model_idx < 0 or model_idx >= len(self._models):
+            self._ptn_name_var.set("—")
+            return
+        model = self._models[model_idx]
+        try:
+            ptn_no = int(self._ptn_var.get())
+        except (ValueError, tk.TclError):
+            self._ptn_name_var.set("—")
+            return
+
+        for p in model.patterns:
+            p_no = p.get('ptn_no', 0) if isinstance(p, dict) else 0
+            if int(p_no) == ptn_no:
+                name = p.get('name', '—') if isinstance(p, dict) else '—'
+                self._ptn_name_var.set(name or '—')
+                return
+        self._ptn_name_var.set("(없음)")
 
     def _ok(self):
         idx = self._model_combo.current()

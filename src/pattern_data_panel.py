@@ -7,6 +7,19 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 
+_VOLTAGE_KEYS = [
+    'r_v1', 'r_v2', 'r_v3', 'r_v4',
+    'g_v1', 'g_v2', 'g_v3', 'g_v4',
+    'b_v1', 'b_v2', 'b_v3', 'b_v4',
+    'w_v1', 'w_v2', 'w_v3', 'w_v4',
+]
+
+
+def _is_zero_pattern(p: dict) -> bool:
+    """모든 전압 값이 0인 편집되지 않은 빈 패턴인지 확인"""
+    return all(float(p.get(k, 0)) == 0 for k in _VOLTAGE_KEYS)
+
+
 PATTERN_TYPE_NAMES = {
     0: '-',    1: 'A',     2: 'B',    3: 'PF1',  4: 'PF2',
     5: 'PF3',  6: 'ZIV',  7: 'ZRB',  8: 'ZRB2', 9: 'ZRB3',
@@ -82,8 +95,8 @@ class PatternDataPanel(tk.Frame):
 
     # ──────────────────────────────────────────────────────────
     def set_patterns(self, patterns: list):
-        """패턴 목록 설정 후 테이블 갱신"""
-        self._patterns = [dict(p) for p in patterns]
+        """패턴 목록 설정 후 테이블 갱신 (모든 값이 0인 패턴은 제외)"""
+        self._patterns = [dict(p) for p in patterns if not _is_zero_pattern(p)]
         self._refresh_table()
 
     def get_patterns(self) -> list:
