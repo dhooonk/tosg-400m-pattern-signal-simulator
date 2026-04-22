@@ -88,8 +88,9 @@ def _compute_segments(sync_data_us: float, signals: List[Dict],
         delay  = float(sig.get('delay',  0))
         width  = float(sig.get('width',  0))
         period = float(sig.get('period', 0))
-        for bp in [delay, delay + width, period, period + delay,
-                   period + delay + width]:
+        eff_delay = delay % period if period > 0 else delay
+        for bp in [eff_delay, eff_delay + width, period,
+                   period + eff_delay, period + eff_delay + width]:
             if 0 < bp < sync_data_us:
                 breakpoints.add(bp)
 
@@ -126,8 +127,9 @@ def _get_level(sig: Dict, t_us: float) -> float:
         return v1
 
     if period > 0:
+        eff_delay = delay % period  # delay >= period인 경우 정규화
         phase = t_us % period
-        in_pulse = (delay <= phase < delay + width)
+        in_pulse = (eff_delay <= phase < eff_delay + width)
     else:
         in_pulse = (delay <= t_us < delay + width)
 
@@ -155,6 +157,10 @@ class ExcelWaveformExporter:
     openpyxl을 사용하여 신호 파형을 셀 테두리로 시각화합니다.
     """
 
+    def __init__(self):
+        self._pending_shapes: Dict[str, List[str]] = {}
+        self._shape_id_counter: Dict[str, int] = {}
+
     def export_all_models(self, filepath: str, model_store) -> bool:
         """
         model_store의 전체 모델을 각 시트에 파형으로 내보내기
@@ -166,6 +172,9 @@ class ExcelWaveformExporter:
 
         if not model_store.models:
             return False
+
+        self._pending_shapes = {}
+        self._shape_id_counter = {}
 
         wb = Workbook()
         first_sheet = True
@@ -200,6 +209,7 @@ class ExcelWaveformExporter:
             self._draw_sheet(ws, visible, sync_data_us, model_name)
 
         wb.save(filepath)
+        self._inject_shapes(filepath)
         return True
 
     def export(self, filepath: str, signals: List[Dict],
@@ -213,6 +223,9 @@ class ExcelWaveformExporter:
         if not signals:
             return False
 
+        self._pending_shapes = {}
+        self._shape_id_counter = {}
+
         wb = Workbook()
         ws = wb.active
         safe_title = re.sub(r'[\\/*?\[\]:]', '_', model_name)[:31]
@@ -222,6 +235,7 @@ class ExcelWaveformExporter:
         self._draw_sheet(ws, signals, sync_data_us, model_name)
 
         wb.save(filepath)
+        self._inject_shapes(filepath)
         return True
 
     def _draw_sheet(self, ws, signals: List[Dict],
@@ -356,10 +370,9 @@ class ExcelWaveformExporter:
 
                 prev_voltage = voltage
 
-            # timing 정보 표시
-            self._draw_signal_timing(
-                ws, sig, sig_idx, segments, seg_start_cols, seg_cols,
-                sync_data_us, center_align, solid_side
+            # timing 화살표 도형 수집 (저장 후 xlsx 주입)
+            self._collect_timing_shapes(
+                ws.title, sig, sig_idx, seg_start_cols, seg_cols, sync_data_us
             )
 
     def _draw_waveform_cells(self, ws, h_row, m_row, l_row,
@@ -368,7 +381,8 @@ class ExcelWaveformExporter:
         """
         파형 셀 테두리 그리기
 
-        - 전환(transition) 구간의 c1 열에 H/M/L 모두 굵은 left border (수직 연결선)
+        - 전환(transition) 구간의 c1 열: 이전/현재 전압 레벨 행 사이만 굵은 left border
+          RT(상승): 이전 행→현재 행 (아래→위) 구간만 / FT(하강): 반대
         - 비전환 구간 경계에는 border 없음 (깔끔한 파형 표시)
         - 수평 파형선: 전압 레벨에 따라 H/M/L 중 해당 행에만 그림
         """
@@ -377,14 +391,23 @@ class ExcelWaveformExporter:
         thick = solid_side_fn('thick')
         none  = Side(style=None)
 
+        def _vol_row(v):
+            if v > 0: return h_row
+            elif v == 0: return m_row
+            else: return l_row
+
         for col in range(c1, c2 + 1):
             is_left_col = (col == c1)
 
-            # 좌측 경계선: 전환 시에만 굵은선, 비전환은 없음
-            if is_transition and is_left_col:
-                left_h = thick
-                left_m = thick
-                left_l = thick
+            # 좌측 경계선: RT/FT 관련 행 범위만 굵은선
+            if is_transition and is_left_col and prev_voltage is not None:
+                prev_r = _vol_row(prev_voltage)
+                curr_r = _vol_row(voltage)
+                r_min  = min(prev_r, curr_r)
+                r_max  = max(prev_r, curr_r)
+                left_h = thick if r_min <= h_row <= r_max else none
+                left_m = thick if r_min <= m_row <= r_max else none
+                left_l = thick if r_min <= l_row <= r_max else none
             else:
                 left_h = none
                 left_m = none
@@ -480,3 +503,211 @@ class ExcelWaveformExporter:
         if c_start > c_end:
             c_end = c_start
         return c_start, c_end
+
+    # ── 타이밍 화살표 도형 ───────────────────────────────────────────
+
+    def _collect_timing_shapes(self, sheet_title: str, sig: Dict, sig_idx: int,
+                                seg_start_cols, seg_cols,
+                                sync_data_us: float) -> None:
+        """
+        타이밍 구간별 화살표 + 텍스트 상자 도형 XML을 수집.
+        _inject_shapes 에서 xlsx 저장 후 주입.
+
+        구간:
+          ① Start → 첫 RT : Delay (보라)
+          ② RT → FT       : Width (파랑)
+          ③ FT → 다음 RT  : Period - Width (주황)
+        """
+        delay  = float(sig.get('delay',  0))
+        width  = float(sig.get('width',  0))
+        period = float(sig.get('period', 0))
+
+        if delay == 0 and width == 0 and period == 0:
+            return
+
+        eff_delay = delay % period if period > 0 else delay
+        timing_row_0 = _sig_timing_row(sig_idx) - 1   # 0-based row
+        total_cols   = sum(seg_cols)
+
+        def us_to_col_0(us_val: float) -> int:
+            ratio = us_val / sync_data_us if sync_data_us > 0 else 0
+            return (COL_WAVE_START - 1) + int(ratio * total_cols)  # 0-based
+
+        intervals = []
+        if eff_delay > 0:
+            intervals.append((0.0, eff_delay,           '7030A0', _format_us(eff_delay)))
+        if width > 0:
+            intervals.append((eff_delay, eff_delay + width, '0070C0', _format_us(width)))
+        if period > 0:
+            rest = period - eff_delay - width
+            if rest > 0:
+                intervals.append((eff_delay + width, period, 'CC5500', _format_us(rest)))
+
+        if not intervals:
+            return
+
+        if sheet_title not in self._pending_shapes:
+            self._pending_shapes[sheet_title]    = []
+            self._shape_id_counter[sheet_title]  = 1
+
+        # 행 높이 절반 EMU (기본 행 높이 ≈ 190500 EMU)
+        HALF_ROW_EMU = 95250
+
+        for us_start, us_end, color, label in intervals:
+            c0 = us_to_col_0(us_start)
+            c1 = us_to_col_0(us_end)
+            if c1 <= c0:
+                c1 = c0 + 1
+
+            sid = self._shape_id_counter[sheet_title]
+
+            # ── 화살표 도형 (하단 절반) ────────────────
+            arrow = (
+                '<xdr:twoCellAnchor editAs="oneCell">'
+                f'<xdr:from><xdr:col>{c0}</xdr:col><xdr:colOff>0</xdr:colOff>'
+                f'<xdr:row>{timing_row_0}</xdr:row><xdr:rowOff>{HALF_ROW_EMU}</xdr:rowOff></xdr:from>'
+                f'<xdr:to><xdr:col>{c1}</xdr:col><xdr:colOff>0</xdr:colOff>'
+                f'<xdr:row>{timing_row_0 + 1}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to>'
+                f'<xdr:sp macro="" textlink=""><xdr:nvSpPr>'
+                f'<xdr:cNvPr id="{sid}" name="Arrow{sid}"/>'
+                f'<xdr:cNvSpPr><a:spLocks noGrp="1"/></xdr:cNvSpPr></xdr:nvSpPr>'
+                f'<xdr:spPr><a:prstGeom prst="leftRightArrow"><a:avLst/></a:prstGeom>'
+                f'<a:solidFill><a:srgbClr val="{color}"/></a:solidFill>'
+                f'<a:ln><a:noFill/></a:ln></xdr:spPr>'
+                f'<xdr:txBody><a:bodyPr/><a:lstStyle/><a:p/></xdr:txBody>'
+                f'</xdr:sp><xdr:clientData/></xdr:twoCellAnchor>'
+            )
+            self._pending_shapes[sheet_title].append(arrow)
+            self._shape_id_counter[sheet_title] += 1
+            sid += 1
+
+            # ── 텍스트 상자 (상단 절반) ────────────────
+            textbox = (
+                '<xdr:twoCellAnchor editAs="oneCell">'
+                f'<xdr:from><xdr:col>{c0}</xdr:col><xdr:colOff>0</xdr:colOff>'
+                f'<xdr:row>{timing_row_0}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>'
+                f'<xdr:to><xdr:col>{c1}</xdr:col><xdr:colOff>0</xdr:colOff>'
+                f'<xdr:row>{timing_row_0}</xdr:row><xdr:rowOff>{HALF_ROW_EMU}</xdr:rowOff></xdr:to>'
+                f'<xdr:sp macro="" textlink=""><xdr:nvSpPr>'
+                f'<xdr:cNvPr id="{sid}" name="TextBox{sid}"/>'
+                f'<xdr:cNvSpPr txBox="1"><a:spLocks noGrp="1"/></xdr:cNvSpPr></xdr:nvSpPr>'
+                f'<xdr:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom>'
+                f'<a:noFill/><a:ln><a:noFill/></a:ln></xdr:spPr>'
+                f'<xdr:txBody><a:bodyPr anchor="ctr"/><a:lstStyle/>'
+                f'<a:p><a:pPr algn="ctr"/>'
+                f'<a:r><a:rPr sz="700" b="1" dirty="0">'
+                f'<a:solidFill><a:srgbClr val="{color}"/></a:solidFill>'
+                f'</a:rPr><a:t>{label}</a:t></a:r></a:p>'
+                f'</xdr:txBody></xdr:sp><xdr:clientData/></xdr:twoCellAnchor>'
+            )
+            self._pending_shapes[sheet_title].append(textbox)
+            self._shape_id_counter[sheet_title] += 1
+
+    def _inject_shapes(self, filepath: str) -> None:
+        """
+        저장된 xlsx 파일에 _pending_shapes 도형 XML을 주입.
+        openpyxl이 지원하지 않는 도형을 zipfile 포스트 프로세싱으로 추가.
+        """
+        if not self._pending_shapes:
+            return
+
+        import zipfile
+        import xml.etree.ElementTree as ET
+
+        with zipfile.ZipFile(filepath, 'r') as zin:
+            file_contents = {name: zin.read(name) for name in zin.namelist()}
+
+        WB_NS   = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
+        R_NS    = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
+        RELS_NS = 'http://schemas.openxmlformats.org/package/2006/relationships'
+        XDR_NS  = 'http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing'
+        A_NS    = 'http://schemas.openxmlformats.org/drawingml/2006/main'
+        DRAW_REL_TYPE = (
+            'http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing'
+        )
+        DRAW_CT = 'application/vnd.openxmlformats-officedocument.drawing+xml'
+
+        # 워크북 → 시트 파일 매핑
+        wb_root   = ET.fromstring(file_contents['xl/workbook.xml'])
+        rels_root = ET.fromstring(file_contents['xl/_rels/workbook.xml.rels'])
+        rel_target = {
+            r.get('Id'): r.get('Target')
+            for r in rels_root.findall(f'{{{RELS_NS}}}Relationship')
+        }
+        sheet_file_map: Dict[str, str] = {}
+        for sh in wb_root.findall(f'.//{{{WB_NS}}}sheet'):
+            rid = sh.get(f'{{{R_NS}}}id')
+            if rid in rel_target:
+                sheet_file_map[sh.get('name')] = rel_target[rid]
+
+        existing_drawings = [n for n in file_contents
+                             if n.startswith('xl/drawings/drawing')]
+        next_draw_idx = len(existing_drawings) + 1
+
+        for sheet_title, shape_xmls in self._pending_shapes.items():
+            if sheet_title not in sheet_file_map or not shape_xmls:
+                continue
+
+            rel_path   = sheet_file_map[sheet_title]          # e.g. 'worksheets/sheet1.xml'
+            parts      = rel_path.rsplit('/', 1)
+            sheet_dir  = parts[0]
+            sheet_fn   = parts[1]
+            sheet_xl   = f'xl/{rel_path}'
+            sheet_rels = f'xl/{sheet_dir}/_rels/{sheet_fn}.rels'
+            draw_fname  = f'xl/drawings/drawing{next_draw_idx}.xml'
+            draw_target = f'../drawings/drawing{next_draw_idx}.xml'
+            draw_rid    = f'rDraw{next_draw_idx}'
+            next_draw_idx += 1
+
+            # ── 드로잉 XML 생성 ──────────────────────
+            drawing_xml = (
+                '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                f'<xdr:wsDr xmlns:xdr="{XDR_NS}" xmlns:a="{A_NS}">'
+                + ''.join(shape_xmls)
+                + '</xdr:wsDr>'
+            ).encode('utf-8')
+            file_contents[draw_fname] = drawing_xml
+
+            # ── 시트 rels 업데이트 ────────────────────
+            new_rel = (
+                f'<Relationship Id="{draw_rid}" '
+                f'Type="{DRAW_REL_TYPE}" '
+                f'Target="{draw_target}"/>'
+            )
+            if sheet_rels in file_contents:
+                rels_str = file_contents[sheet_rels].decode('utf-8')
+                rels_str = rels_str.replace('</Relationships>',
+                                            f'{new_rel}</Relationships>')
+                file_contents[sheet_rels] = rels_str.encode('utf-8')
+            else:
+                file_contents[sheet_rels] = (
+                    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                    '<Relationships xmlns="'
+                    'http://schemas.openxmlformats.org/package/2006/relationships">'
+                    + new_rel
+                    + '</Relationships>'
+                ).encode('utf-8')
+
+            # ── 시트 XML에 <drawing> 요소 추가 ────────
+            draw_elem = (
+                f'<drawing xmlns:r="{R_NS}" r:id="{draw_rid}"/>'
+            )
+            sh_str = file_contents[sheet_xl].decode('utf-8')
+            if '<drawing ' not in sh_str:
+                sh_str = sh_str.replace('</worksheet>',
+                                        f'{draw_elem}</worksheet>')
+                file_contents[sheet_xl] = sh_str.encode('utf-8')
+
+            # ── Content_Types.xml 업데이트 ─────────────
+            ct_entry = (
+                f'<Override PartName="/{draw_fname}" ContentType="{DRAW_CT}"/>'
+            )
+            ct_str = file_contents['[Content_Types].xml'].decode('utf-8')
+            if ct_entry not in ct_str:
+                ct_str = ct_str.replace('</Types>', f'{ct_entry}</Types>')
+                file_contents['[Content_Types].xml'] = ct_str.encode('utf-8')
+
+        # ── zip 재작성 ────────────────────────────────
+        with zipfile.ZipFile(filepath, 'w', zipfile.ZIP_DEFLATED) as zout:
+            for name, content in file_contents.items():
+                zout.writestr(name, content)

@@ -100,10 +100,11 @@ class WaveformGenerator:
 
                 if signal.period > 0:
                     # 반복 펄스: period 주기로 패턴 반복
-                    # phase가 [delay, delay+width) 구간이면 high 전압
+                    # delay >= period인 경우 정규화 (CLK2/CLK3 등 대응)
+                    eff_delay = signal.delay % signal.period
                     phase = rel_time % signal.period
-                    hi_mask = (phase >= signal.delay) & (
-                        phase < signal.delay + signal.width)
+                    hi_mask = (phase >= eff_delay) & (
+                        phase < eff_delay + signal.width)
                 else:
                     # 단일 펄스: 프레임 내 [delay, delay+width) 구간만 high
                     hi_mask = (rel_time >= signal.delay) & (
