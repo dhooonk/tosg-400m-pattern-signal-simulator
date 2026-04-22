@@ -114,7 +114,7 @@ class ControlPanel(tk.Frame):
         # 그리드 토글
         tk.Button(row2, text="그리드", command=self._on_toggle_grid,
                   bg='#e8e8e8', fg='#333333', font=('Arial', 8),
-                  relief=tk.GROOVE, bd=1, padx=5, pady=2).pack(side=tk.LEFT, padx=(0, 6))
+                  relief=tk.RAISED, bd=2, padx=5, pady=2).pack(side=tk.LEFT, padx=(0, 6))
 
         # 뷰 모드
         tk.Label(row2, text="보기:", **label_kw).pack(side=tk.LEFT)
@@ -160,7 +160,7 @@ class ControlPanel(tk.Frame):
             tk.Button(row3, text=text, command=cmd,
                       bg='#e8e8e8', fg='#333333',
                       font=('Arial', 8),
-                      relief=tk.GROOVE, bd=1, padx=6, pady=3,
+                      relief=tk.RAISED, bd=2, padx=6, pady=3,
                       cursor='hand2').pack(side=tk.LEFT, padx=2)
 
     # ──────────────────────────────────────────────────────────────

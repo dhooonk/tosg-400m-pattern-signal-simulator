@@ -399,15 +399,13 @@ class ExcelWaveformExporter:
         for col in range(c1, c2 + 1):
             is_left_col = (col == c1)
 
-            # 좌측 경계선: RT/FT 관련 행 범위만 굵은선
+            # 좌측 경계선: 현재 전압 레벨 행에만 굵은선
+            # RT(상승): HIGH 행만 / FT(하강): LOW 행만 → 자연스러운 단방향 파형
             if is_transition and is_left_col and prev_voltage is not None:
-                prev_r = _vol_row(prev_voltage)
                 curr_r = _vol_row(voltage)
-                r_min  = min(prev_r, curr_r)
-                r_max  = max(prev_r, curr_r)
-                left_h = thick if r_min <= h_row <= r_max else none
-                left_m = thick if r_min <= m_row <= r_max else none
-                left_l = thick if r_min <= l_row <= r_max else none
+                left_h = thick if curr_r == h_row else none
+                left_m = thick if curr_r == m_row else none
+                left_l = thick if curr_r == l_row else none
             else:
                 left_h = none
                 left_m = none
@@ -571,7 +569,9 @@ class ExcelWaveformExporter:
                 f'<xdr:sp macro="" textlink=""><xdr:nvSpPr>'
                 f'<xdr:cNvPr id="{sid}" name="Arrow{sid}"/>'
                 f'<xdr:cNvSpPr><a:spLocks noGrp="1"/></xdr:cNvSpPr></xdr:nvSpPr>'
-                f'<xdr:spPr><a:prstGeom prst="leftRightArrow"><a:avLst/></a:prstGeom>'
+                f'<xdr:spPr>'
+                f'<a:xfrm><a:off x="0" y="0"/><a:ext cx="1" cy="1"/></a:xfrm>'
+                f'<a:prstGeom prst="leftRightArrow"><a:avLst/></a:prstGeom>'
                 f'<a:solidFill><a:srgbClr val="{color}"/></a:solidFill>'
                 f'<a:ln><a:noFill/></a:ln></xdr:spPr>'
                 f'<xdr:txBody><a:bodyPr/><a:lstStyle/><a:p/></xdr:txBody>'
@@ -591,7 +591,9 @@ class ExcelWaveformExporter:
                 f'<xdr:sp macro="" textlink=""><xdr:nvSpPr>'
                 f'<xdr:cNvPr id="{sid}" name="TextBox{sid}"/>'
                 f'<xdr:cNvSpPr txBox="1"><a:spLocks noGrp="1"/></xdr:cNvSpPr></xdr:nvSpPr>'
-                f'<xdr:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom>'
+                f'<xdr:spPr>'
+                f'<a:xfrm><a:off x="0" y="0"/><a:ext cx="1" cy="1"/></a:xfrm>'
+                f'<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>'
                 f'<a:noFill/><a:ln><a:noFill/></a:ln></xdr:spPr>'
                 f'<xdr:txBody><a:bodyPr anchor="ctr"/><a:lstStyle/>'
                 f'<a:p><a:pPr algn="ctr"/>'

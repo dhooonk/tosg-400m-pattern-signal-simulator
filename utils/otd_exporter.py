@@ -256,7 +256,7 @@ class OtdExporter:
         OTD 포맷: 2XX=SYY,NAME,V1,V2,V3,V4,DELAY,WIDTH,PERIOD,LENGTH,AREA,MF,MOD,INV,TYPE
         단위 변환: 전압 V→mV, 시간 us→1/10us
         """
-        num_str = sig.get('num', f'S{idx:02d}')
+        num_str = sig.get('num', '') or f'S{idx:02d}'
         name    = sig.get('name', '')
         v1 = _v_to_mv(float(sig.get('v1', 0)))
         v2 = _v_to_mv(float(sig.get('v2', 0)))

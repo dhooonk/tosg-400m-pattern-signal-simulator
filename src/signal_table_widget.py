@@ -44,7 +44,7 @@ class SignalTableWidget(tk.Frame):
         
         # CRUD 버튼 생성
         _BTN = dict(bg='#e8e8e8', fg='#333333', font=('Arial', 9),
-                    relief=tk.GROOVE, borderwidth=1)
+                    relief=tk.RAISED, borderwidth=2)
         tk.Button(btn_frame, text="신호 추가", command=self._on_add,    **_BTN).pack(side=tk.LEFT, padx=2)
         tk.Button(btn_frame, text="신호 수정", command=self._on_edit,   **_BTN).pack(side=tk.LEFT, padx=2)
         tk.Button(btn_frame, text="신호 복제", command=self._on_duplicate, **_BTN).pack(side=tk.LEFT, padx=2)
@@ -137,7 +137,7 @@ class SignalTableWidget(tk.Frame):
             
             values = (
                 visible_str,  # 가시성 체크박스
-                "■", # 색상 표시용 문자
+                color_hex,    # 색상 hex 값 (검정 텍스트로 가독성 확보)
                 signal.name,
                 signal.sig_type,
                 signal.sig_mode,
@@ -151,12 +151,9 @@ class SignalTableWidget(tk.Frame):
                 f"{signal.period:.1f}us"
             )
             
-            # 태그 생성 (색상별로 다른 태그 사용)
-            # 색상 사각형(■)이 신호 색상으로 표시되도록 foreground 색상 설정
+            # 모든 행 텍스트는 검정색으로 고정 (신호 색상이 배경과 유사해도 가독성 유지)
             tag_name = f"color_{color_hex.replace('#', '')}"
-            self.tree.tag_configure(tag_name, foreground=color_hex)
-            
-            # 색상 태그를 적용하여 색상 사각형이 신호 색상으로 표시됨
+            self.tree.tag_configure(tag_name, foreground='black')
             item_id = self.tree.insert('', tk.END, values=values, tags=(tag_name,))
     
     def get_selected_index(self):

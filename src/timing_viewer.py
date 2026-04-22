@@ -73,8 +73,12 @@ class WaveformGenerator:
         frame_us    = sync_data * 1_000_000
         total_us    = frame_us * num_frames
 
-        # 시간 배열: 프레임당 2000 포인트로 충분한 해상도 확보
-        n_pts   = 2000 * num_frames
+        # 시간 배열: 기본 2000 포인트, CLK처럼 빠른 신호는 per-period 최소 10 샘플 보장
+        n_pts = 2000 * num_frames
+        if signal.period > 0:
+            pts_for_period = int(total_us / signal.period * 10)
+            n_pts = max(n_pts, pts_for_period)
+        n_pts = min(n_pts, 500_000)  # 성능 캡
         time    = np.linspace(0, total_us, n_pts)
         voltage = np.zeros_like(time)
 
@@ -311,18 +315,20 @@ class TimingViewer(tk.Frame):
         self.text.set_visible(False)
         
         signals = self.signal_manager.get_all_signals()
-        
+
         # V11: visible=True인 신호만 필터링
         visible_signals = [s for s in signals if getattr(s, 'visible', True)]
-        
+
         if not visible_signals:
-            self.ax.text(0.5, 0.5, 'No visible signals to display', 
+            self.ax.text(0.5, 0.5, 'No visible signals to display',
                         ha='center', va='center', fontsize=14,
                         transform=self.ax.transAxes, color='black')
             self.canvas.draw()
             return
-        
-        sync_data = self.sync_data_manager.get_current_sync_data()
+
+        # OTD에서 직접 읽은 sync_data_us 사용 (1/frequency 반올림 오차 방지)
+        sync_data_us = self.sync_data_manager.get_current_sync_data_us()
+        sync_data = sync_data_us / 1_000_000 if sync_data_us > 0 else self.sync_data_manager.get_current_sync_data()
         
         # 신호 영역 정보 초기화 (호버 감지용)
         self.signal_bands = [] # (y_min, y_max, signal_name)
@@ -376,23 +382,24 @@ class TimingViewer(tk.Frame):
         for idx in range(len(signals) - 1, -1, -1):
             signal = signals[idx]
             time, voltage = generator.generate_waveform(signal, self.num_frames, sync_data)
-            
+
             # 전압 범위 계산
             v_min = min(signal.v1, signal.v2, signal.v3, signal.v4)
             v_max = max(signal.v1, signal.v2, signal.v3, signal.v4)
-            
+
             # 신호의 실제 높이
             signal_height = v_max - v_min
             if signal_height < 1.0: signal_height = 1.0
-            
+
             # 배치할 오프셋 계산 (v_min이 current_y_cursor에 오도록)
             offset = current_y_cursor - v_min
-            
-            # 데이터 저장 (호버용)
-            self.plot_data[signal.name] = {
+
+            # 데이터 저장 (호버용) — 동명 신호 구분을 위해 인덱스 포함 키 사용
+            data_key = f"{signal.name}_{idx}"
+            self.plot_data[data_key] = {
                 'time': time,
-                'voltage': voltage, # 실제 전압값 저장
-                'offset': offset,   # 그래프상 오프셋
+                'voltage': voltage,  # 실제 전압값 저장
+                'offset': offset,    # 그래프상 오프셋
                 'y_min': current_y_cursor,
                 'y_max': current_y_cursor + signal_height
             }
@@ -413,8 +420,8 @@ class TimingViewer(tk.Frame):
             if idx % 2 == 0:
                 self.ax.axhspan(bg_bottom, bg_top, color='#f0f0f0', alpha=0.5, zorder=0)
             
-            # 호버 감지를 위해 영역 저장
-            self.signal_bands.append((bg_bottom, bg_top, signal.name))
+            # 호버 감지를 위해 영역 저장 (data_key로 plot_data와 연결)
+            self.signal_bands.append((bg_bottom, bg_top, data_key))
             
             # Y축 레이블 설정 (그래프 외부 좌측 - 신호 이름만)
             mid_y = current_y_cursor + signal_height / 2
@@ -529,7 +536,8 @@ class TimingViewer(tk.Frame):
                 # X값에 가장 가까운 인덱스 찾기
                 idx = (np.abs(data['time'] - x)).argmin()
                 voltage = data['voltage'][idx]
-                info_text += f"[{target_signal}]: {voltage:.2f} V"
+                display_name = target_signal.rsplit('_', 1)[0]
+                info_text += f"[{display_name}]: {voltage:.2f} V"
                 found_signal = True
             else:
                 # 밴드 밖이면 가장 가까운 신호라도 표시? 아니면 표시 안함
@@ -541,7 +549,8 @@ class TimingViewer(tk.Frame):
             for name, data in self.plot_data.items():
                 idx = (np.abs(data['time'] - x)).argmin()
                 voltage = data['voltage'][idx]
-                info_text += f"{name}: {voltage:.2f} V\n"
+                display_name = name.rsplit('_', 1)[0]
+                info_text += f"{display_name}: {voltage:.2f} V\n"
                 count += 1
                 if count >= 5: # 최대 5개까지만 표시
                     info_text += "..."

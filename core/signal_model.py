@@ -109,6 +109,8 @@ class Signal:
         # 색상 미지정 시 랜덤 생성 (너무 밝거나 어두운 색은 포함될 수 있음)
         self.color = color if color is not None else "#{:06x}".format(
             random.randint(0, 0xFFFFFF))
+        # OTD 원본 번호 (예: "S03") — 내보내기 시 원본 번호 유지에 사용
+        self._num: str = ""
 
     def to_dict(self) -> dict:
         """
@@ -133,6 +135,7 @@ class Signal:
             'period': self.period,
             'color':  self.color,
             'visible': self.visible,
+            'num':    self._num,  # OTD 원본 번호 보존
         }
 
     @staticmethod
@@ -148,7 +151,7 @@ class Signal:
         Returns:
             Signal: 복원된 Signal 객체
         """
-        return Signal(
+        sig = Signal(
             name      = data.get('name',      'Signal'),
             sig_type  = data.get('sig_type',  ''),
             sig_mode  = data.get('sig_mode',  0),
@@ -163,6 +166,8 @@ class Signal:
             color   = data.get('color',   None),
             visible = data.get('visible', True),
         )
+        sig._num = data.get('num', '')
+        return sig
 
     def __repr__(self) -> str:
         return (f"Signal(name={self.name!r}, mode={self.sig_mode}, "
