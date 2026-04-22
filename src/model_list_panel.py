@@ -61,7 +61,7 @@ class ModelListPanel(tk.Frame):
             pattern_data_panel: PatternDataPanel (나중에 연결 가능)
             listbox_height: Listbox 표시 행 수 (기본 8)
         """
-        super().__init__(parent, bg='#e8e8e8')
+        super().__init__(parent, bg='#f0f0f0')
         self.model_store        = model_store
         self.signal_manager     = signal_manager
         self.sync_data_manager  = sync_data_manager
@@ -80,16 +80,16 @@ class ModelListPanel(tk.Frame):
 
     def _setup_ui(self):
         """Listbox + 스크롤바 UI 구성"""
-        # 헤더 레이블
+        # 헤더 레이블 (다른 패널 헤더와 동일한 스타일)
         header = tk.Label(
             self, text="MODEL LIST",
             font=('Arial', 12, 'bold'),
-            bg='#555555', fg='white', pady=6
+            bg='#2196F3', fg='white', pady=6
         )
         header.pack(side=tk.TOP, fill=tk.X)
 
         # Listbox 프레임
-        listframe = tk.Frame(self, bg='#e8e8e8')
+        listframe = tk.Frame(self, bg='#f0f0f0')
         listframe.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=4, pady=4)
 
         self._listbox = tk.Listbox(
@@ -114,7 +114,7 @@ class ModelListPanel(tk.Frame):
         self._count_var = tk.StringVar(value="모델 없음")
         tk.Label(
             self, textvariable=self._count_var,
-            font=('Arial', 8), bg='#e8e8e8', fg='#555'
+            font=('Arial', 8), bg='#f0f0f0', fg='#555'
         ).pack(side=tk.BOTTOM, pady=2)
 
     # ──────────────────────────────────────────────────────────────
