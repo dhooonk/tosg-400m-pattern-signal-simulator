@@ -80,20 +80,23 @@ class ModelListPanel(tk.Frame):
 
     def _setup_ui(self):
         """Listbox + 스크롤바 UI 구성"""
-        # 헤더 레이블 (다른 패널 헤더와 동일한 스타일)
-        header = tk.Label(
-            self, text="MODEL LIST",
-            font=('Arial', 12, 'bold'),
-            bg='#2196F3', fg='white', pady=6
-        )
-        header.pack(side=tk.TOP, fill=tk.X)
+        # 하단 모델 수 표시 (BOTTOM 먼저 pack해야 LabelFrame이 나머지 공간 채움)
+        self._count_var = tk.StringVar(value="모델 없음")
+        tk.Label(
+            self, textvariable=self._count_var,
+            font=('Arial', 8), bg='#f0f0f0', fg='#555'
+        ).pack(side=tk.BOTTOM, pady=2)
 
-        # Listbox 프레임
-        listframe = tk.Frame(self, bg='#f0f0f0')
-        listframe.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=4, pady=4)
+        # LabelFrame으로 감싸기 (신호 목록/편집기 패널과 동일한 스타일)
+        lf = tk.LabelFrame(
+            self, text="MODEL LIST",
+            font=('Arial', 10, 'bold'),
+            bg='#f0f0f0', padx=4, pady=4
+        )
+        lf.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=4, pady=4)
 
         self._listbox = tk.Listbox(
-            listframe,
+            lf,
             font=('Consolas', 9),
             bg='#ffffff', fg='#1a1a1a',
             selectbackground='#2980b9',
@@ -101,7 +104,7 @@ class ModelListPanel(tk.Frame):
             activestyle='none',
             height=self._listbox_height
         )
-        vsb = ttk.Scrollbar(listframe, orient='vertical',
+        vsb = ttk.Scrollbar(lf, orient='vertical',
                              command=self._listbox.yview)
         self._listbox.configure(yscrollcommand=vsb.set)
         self._listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -109,13 +112,6 @@ class ModelListPanel(tk.Frame):
 
         # 클릭 이벤트: 모델 선택
         self._listbox.bind('<<ListboxSelect>>', self._on_select)
-
-        # 하단 모델 수 표시
-        self._count_var = tk.StringVar(value="모델 없음")
-        tk.Label(
-            self, textvariable=self._count_var,
-            font=('Arial', 8), bg='#f0f0f0', fg='#555'
-        ).pack(side=tk.BOTTOM, pady=2)
 
     # ──────────────────────────────────────────────────────────────
     # ModelStore 갱신 콜백

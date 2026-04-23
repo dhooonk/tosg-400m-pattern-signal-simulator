@@ -76,27 +76,56 @@ def _format_us(us: float) -> str:
 # ────────────────────────────────────────────────────────────────
 
 def _compute_segments(sync_data_us: float, signals: List[Dict],
-                      max_segs: int = 32) -> List[Tuple[float, float, str]]:
+                      max_segs: int = 32,
+                      n_frames: int = 2) -> List[Tuple[float, float, str]]:
     """
     신호 타이밍 경계점 기반 구간 분할
 
-    모든 신호의 delay, width, period 경계점을 수집하여 구간을 나눕니다.
-    구간이 max_segs를 초과하면 가장 짧은 인접 구간을 병합합니다.
+    동작 순서:
+      1. total_us = sync_data_us × n_frames (기본 2 frame 표시)
+      2. 각 신호의 타이밍 경계점(delay, delay+width, period 배수 등)을
+         각 프레임의 offset을 더해 수집.
+         - delay/width 경계: 신호가 Low↔High로 전환되는 지점
+         - period 경계: 다음 주기가 시작되는 지점
+         - 프레임 경계(sync_data_us, 2×sync_data_us)도 breakpoint로 추가
+      3. 수집한 breakpoints를 정렬 → 인접 쌍을 구간([start, end])으로 변환
+      4. 구간 수 > max_segs 이면 가장 짧은 인접 구간을 반복 병합
+         → 항상 max_segs 이하 구간으로 압축
+      5. 각 구간에 "Seg1", "Seg2", ... 라벨 부여
+
+    Args:
+        sync_data_us: 1 frame 길이(us)
+        signals: 신호 파라미터 딕셔너리 리스트
+        max_segs: 최대 구간 수 (초과 시 병합)
+        n_frames: 표시할 최소 프레임 수 (기본 2)
+
+    Returns:
+        List of (start_us, end_us, label) tuples
     """
-    breakpoints = {0.0, sync_data_us}
-    for sig in signals:
-        delay  = float(sig.get('delay',  0))
-        width  = float(sig.get('width',  0))
-        period = float(sig.get('period', 0))
-        eff_delay = delay % period if period > 0 else delay
-        for bp in [eff_delay, eff_delay + width, period,
-                   period + eff_delay, period + eff_delay + width]:
-            if 0 < bp < sync_data_us:
-                breakpoints.add(bp)
+    total_us = sync_data_us * n_frames
+    breakpoints = {0.0, total_us}
+
+    for frame in range(n_frames):
+        offset = frame * sync_data_us
+        # 프레임 경계점 추가 (두 프레임의 경계가 명확하게 표시됨)
+        if 0 < offset < total_us:
+            breakpoints.add(offset)
+        for sig in signals:
+            delay  = float(sig.get('delay',  0))
+            width  = float(sig.get('width',  0))
+            period = float(sig.get('period', 0))
+            # delay >= period인 경우 정규화 (OTD에서 delay가 period보다 클 수 있음)
+            eff_delay = delay % period if period > 0 else delay
+            for bp in [eff_delay, eff_delay + width, period,
+                       period + eff_delay, period + eff_delay + width]:
+                real_bp = offset + bp
+                if 0 < real_bp < total_us:
+                    breakpoints.add(real_bp)
 
     sorted_bps = sorted(breakpoints)
     raw = list(zip(sorted_bps[:-1], sorted_bps[1:]))
 
+    # 구간 수 초과 시: 가장 짧은 인접 구간 반복 병합
     while len(raw) > max_segs:
         durs = [e - s for s, e in raw]
         idx  = durs.index(min(durs))
@@ -208,8 +237,8 @@ class ExcelWaveformExporter:
 
             self._draw_sheet(ws, visible, sync_data_us, model_name)
 
+        self._apply_shapes_to_worksheets(wb)
         wb.save(filepath)
-        self._inject_shapes(filepath)
         return True
 
     def export(self, filepath: str, signals: List[Dict],
@@ -234,8 +263,8 @@ class ExcelWaveformExporter:
 
         self._draw_sheet(ws, signals, sync_data_us, model_name)
 
+        self._apply_shapes_to_worksheets(wb)
         wb.save(filepath)
-        self._inject_shapes(filepath)
         return True
 
     def _draw_sheet(self, ws, signals: List[Dict],
@@ -246,10 +275,10 @@ class ExcelWaveformExporter:
 
         ws.sheet_view.zoomScale = ZOOM_PERCENT
 
-        # ── 구간 계산 ─────────────────────────────────────────────
-        segments = _compute_segments(sync_data_us, signals)
+        # ── 구간 계산 (최소 2 frame 표시) ─────────────────────────
+        segments = _compute_segments(sync_data_us, signals, n_frames=2)
         n_segs   = len(segments)
-        total_us = sync_data_us
+        total_us = sync_data_us * 2   # 2 frame 기준 전체 시간
 
         TOTAL_WAVE_COLS = min(n_segs * 10, 160)
         seg_cols = []
@@ -355,8 +384,8 @@ class ExcelWaveformExporter:
                     solid_side
                 )
 
-                # 첫 구간에 전압값 레이블 표시 (V 단위)
-                if si_idx == 0:
+                # 전압값 레이블: 첫 구간 또는 파형 전환 구간에 표시
+                if si_idx == 0 or is_transition:
                     v_label = f"{voltage:+.1f}V"
                     if voltage == 0:
                         vc = ws.cell(m_row, c1, v_label)
@@ -370,9 +399,14 @@ class ExcelWaveformExporter:
 
                 prev_voltage = voltage
 
-            # timing 화살표 도형 수집 (저장 후 xlsx 주입)
+            # timing 텍스트를 timing_row 셀에 직접 작성 (항상 표시)
+            self._draw_signal_timing(
+                ws, sig, sig_idx, segments, seg_start_cols, seg_cols,
+                total_us, center_align, solid_side
+            )
+            # timing 화살표 선 도형 수집 (openpyxl drawing으로 추가)
             self._collect_timing_shapes(
-                ws.title, sig, sig_idx, seg_start_cols, seg_cols, sync_data_us
+                ws.title, sig, sig_idx, seg_start_cols, seg_cols, total_us
             )
 
     def _draw_waveform_cells(self, ws, h_row, m_row, l_row,
@@ -399,13 +433,19 @@ class ExcelWaveformExporter:
         for col in range(c1, c2 + 1):
             is_left_col = (col == c1)
 
-            # 좌측 경계선: 현재 전압 레벨 행에만 굵은선
-            # RT(상승): HIGH 행만 / FT(하강): LOW 행만 → 자연스러운 단방향 파형
+            # 좌측 경계선: 출발 행 + 중간 행(zero crossing 시), 목적지 행 제외
+            # 규칙: L→M: L행, L→H: L+M행, H→M: H행, H→L: H+M행, M↔H/L: M행
             if is_transition and is_left_col and prev_voltage is not None:
+                prev_r = _vol_row(prev_voltage)
                 curr_r = _vol_row(voltage)
-                left_h = thick if curr_r == h_row else none
-                left_m = thick if curr_r == m_row else none
-                left_l = thick if curr_r == l_row else none
+                border_rows = {prev_r}
+                # 전압이 양과 음 사이를 직접 교차하면 중간(M) 행도 추가
+                if (prev_r == h_row and curr_r == l_row) or \
+                   (prev_r == l_row and curr_r == h_row):
+                    border_rows.add(m_row)
+                left_h = thick if h_row in border_rows else none
+                left_m = thick if m_row in border_rows else none
+                left_l = thick if l_row in border_rows else none
             else:
                 left_h = none
                 left_m = none
@@ -508,8 +548,8 @@ class ExcelWaveformExporter:
                                 seg_start_cols, seg_cols,
                                 sync_data_us: float) -> None:
         """
-        타이밍 구간별 화살표 + 텍스트 상자 도형 XML을 수집.
-        _inject_shapes 에서 xlsx 저장 후 주입.
+        타이밍 구간별 선 화살표 + 텍스트 상자 도형 XML을 수집.
+        _apply_shapes_to_worksheets 에서 openpyxl drawing으로 추가.
 
         구간:
           ① Start → 첫 RT : Delay (보라)
@@ -559,29 +599,36 @@ class ExcelWaveformExporter:
 
             sid = self._shape_id_counter[sheet_title]
 
-            # ── 화살표 도형 (하단 절반) ────────────────
+            # ── 타이밍 화살표: 선 커넥터(양방향 화살표) ──────────
+            # xdr:cxnSp 를 사용하여 선 객체 생성, 양쪽 끝에 화살표 설정
             arrow = (
                 '<xdr:twoCellAnchor editAs="oneCell">'
                 f'<xdr:from><xdr:col>{c0}</xdr:col><xdr:colOff>0</xdr:colOff>'
                 f'<xdr:row>{timing_row_0}</xdr:row><xdr:rowOff>{HALF_ROW_EMU}</xdr:rowOff></xdr:from>'
                 f'<xdr:to><xdr:col>{c1}</xdr:col><xdr:colOff>0</xdr:colOff>'
                 f'<xdr:row>{timing_row_0 + 1}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to>'
-                f'<xdr:sp macro="" textlink=""><xdr:nvSpPr>'
-                f'<xdr:cNvPr id="{sid}" name="Arrow{sid}"/>'
-                f'<xdr:cNvSpPr><a:spLocks noGrp="1"/></xdr:cNvSpPr></xdr:nvSpPr>'
+                f'<xdr:cxnSp macro="">'
+                f'<xdr:nvCxnSpPr>'
+                f'<xdr:cNvPr id="{sid}" name="Line{sid}"/>'
+                f'<xdr:cNvCxnSpPr/>'
+                f'</xdr:nvCxnSpPr>'
                 f'<xdr:spPr>'
                 f'<a:xfrm><a:off x="0" y="0"/><a:ext cx="1" cy="1"/></a:xfrm>'
-                f'<a:prstGeom prst="leftRightArrow"><a:avLst/></a:prstGeom>'
+                f'<a:prstGeom prst="line"><a:avLst/></a:prstGeom>'
+                f'<a:ln w="25400">'
                 f'<a:solidFill><a:srgbClr val="{color}"/></a:solidFill>'
-                f'<a:ln><a:noFill/></a:ln></xdr:spPr>'
-                f'<xdr:txBody><a:bodyPr/><a:lstStyle/><a:p/></xdr:txBody>'
-                f'</xdr:sp><xdr:clientData/></xdr:twoCellAnchor>'
+                f'<a:headEnd type="arrow"/>'
+                f'<a:tailEnd type="arrow"/>'
+                f'</a:ln>'
+                f'</xdr:spPr>'
+                f'</xdr:cxnSp>'
+                f'<xdr:clientData/></xdr:twoCellAnchor>'
             )
             self._pending_shapes[sheet_title].append(arrow)
             self._shape_id_counter[sheet_title] += 1
             sid += 1
 
-            # ── 텍스트 상자 (상단 절반) ────────────────
+            # ── 텍스트 상자 (타이밍 행 상단 절반, 선 위에 라벨) ──
             textbox = (
                 '<xdr:twoCellAnchor editAs="oneCell">'
                 f'<xdr:from><xdr:col>{c0}</xdr:col><xdr:colOff>0</xdr:colOff>'
@@ -605,111 +652,34 @@ class ExcelWaveformExporter:
             self._pending_shapes[sheet_title].append(textbox)
             self._shape_id_counter[sheet_title] += 1
 
-    def _inject_shapes(self, filepath: str) -> None:
+    def _apply_shapes_to_worksheets(self, wb) -> None:
         """
-        저장된 xlsx 파일에 _pending_shapes 도형 XML을 주입.
-        openpyxl이 지원하지 않는 도형을 zipfile 포스트 프로세싱으로 추가.
+        openpyxl SpreadsheetDrawing을 사용하여 도형을 워크시트에 직접 추가.
+        wb.save() 전에 호출해야 openpyxl이 drawing을 포함하여 저장함.
+        zipfile 후처리 불필요.
         """
         if not self._pending_shapes:
             return
 
-        import zipfile
-        import xml.etree.ElementTree as ET
+        from openpyxl.drawing.spreadsheet_drawing import SpreadsheetDrawing
+        try:
+            from lxml import etree as _et
+        except ImportError:
+            import xml.etree.ElementTree as _et  # type: ignore
 
-        with zipfile.ZipFile(filepath, 'r') as zin:
-            file_contents = {name: zin.read(name) for name in zin.namelist()}
+        XDR_NS = 'http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing'
+        A_NS   = 'http://schemas.openxmlformats.org/drawingml/2006/main'
+        R_NS   = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
 
-        WB_NS   = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
-        R_NS    = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
-        RELS_NS = 'http://schemas.openxmlformats.org/package/2006/relationships'
-        XDR_NS  = 'http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing'
-        A_NS    = 'http://schemas.openxmlformats.org/drawingml/2006/main'
-        DRAW_REL_TYPE = (
-            'http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing'
-        )
-        DRAW_CT = 'application/vnd.openxmlformats-officedocument.drawing+xml'
-
-        # 워크북 → 시트 파일 매핑
-        wb_root   = ET.fromstring(file_contents['xl/workbook.xml'])
-        rels_root = ET.fromstring(file_contents['xl/_rels/workbook.xml.rels'])
-        rel_target = {
-            r.get('Id'): r.get('Target')
-            for r in rels_root.findall(f'{{{RELS_NS}}}Relationship')
-        }
-        sheet_file_map: Dict[str, str] = {}
-        for sh in wb_root.findall(f'.//{{{WB_NS}}}sheet'):
-            rid = sh.get(f'{{{R_NS}}}id')
-            if rid in rel_target:
-                sheet_file_map[sh.get('name')] = rel_target[rid]
-
-        existing_drawings = [n for n in file_contents
-                             if n.startswith('xl/drawings/drawing')]
-        next_draw_idx = len(existing_drawings) + 1
-
-        for sheet_title, shape_xmls in self._pending_shapes.items():
-            if sheet_title not in sheet_file_map or not shape_xmls:
+        for ws in wb.worksheets:
+            shapes = self._pending_shapes.get(ws.title)
+            if not shapes:
                 continue
-
-            rel_path   = sheet_file_map[sheet_title]          # e.g. 'worksheets/sheet1.xml'
-            parts      = rel_path.rsplit('/', 1)
-            sheet_dir  = parts[0]
-            sheet_fn   = parts[1]
-            sheet_xl   = f'xl/{rel_path}'
-            sheet_rels = f'xl/{sheet_dir}/_rels/{sheet_fn}.rels'
-            draw_fname  = f'xl/drawings/drawing{next_draw_idx}.xml'
-            draw_target = f'../drawings/drawing{next_draw_idx}.xml'
-            draw_rid    = f'rDraw{next_draw_idx}'
-            next_draw_idx += 1
-
-            # ── 드로잉 XML 생성 ──────────────────────
             drawing_xml = (
-                '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-                f'<xdr:wsDr xmlns:xdr="{XDR_NS}" xmlns:a="{A_NS}">'
-                + ''.join(shape_xmls)
+                f'<xdr:wsDr xmlns:xdr="{XDR_NS}" xmlns:a="{A_NS}" xmlns:r="{R_NS}">'
+                + ''.join(shapes)
                 + '</xdr:wsDr>'
-            ).encode('utf-8')
-            file_contents[draw_fname] = drawing_xml
-
-            # ── 시트 rels 업데이트 ────────────────────
-            new_rel = (
-                f'<Relationship Id="{draw_rid}" '
-                f'Type="{DRAW_REL_TYPE}" '
-                f'Target="{draw_target}"/>'
             )
-            if sheet_rels in file_contents:
-                rels_str = file_contents[sheet_rels].decode('utf-8')
-                rels_str = rels_str.replace('</Relationships>',
-                                            f'{new_rel}</Relationships>')
-                file_contents[sheet_rels] = rels_str.encode('utf-8')
-            else:
-                file_contents[sheet_rels] = (
-                    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-                    '<Relationships xmlns="'
-                    'http://schemas.openxmlformats.org/package/2006/relationships">'
-                    + new_rel
-                    + '</Relationships>'
-                ).encode('utf-8')
-
-            # ── 시트 XML에 <drawing> 요소 추가 ────────
-            draw_elem = (
-                f'<drawing xmlns:r="{R_NS}" r:id="{draw_rid}"/>'
-            )
-            sh_str = file_contents[sheet_xl].decode('utf-8')
-            if '<drawing ' not in sh_str:
-                sh_str = sh_str.replace('</worksheet>',
-                                        f'{draw_elem}</worksheet>')
-                file_contents[sheet_xl] = sh_str.encode('utf-8')
-
-            # ── Content_Types.xml 업데이트 ─────────────
-            ct_entry = (
-                f'<Override PartName="/{draw_fname}" ContentType="{DRAW_CT}"/>'
-            )
-            ct_str = file_contents['[Content_Types].xml'].decode('utf-8')
-            if ct_entry not in ct_str:
-                ct_str = ct_str.replace('</Types>', f'{ct_entry}</Types>')
-                file_contents['[Content_Types].xml'] = ct_str.encode('utf-8')
-
-        # ── zip 재작성 ────────────────────────────────
-        with zipfile.ZipFile(filepath, 'w', zipfile.ZIP_DEFLATED) as zout:
-            for name, content in file_contents.items():
-                zout.writestr(name, content)
+            drawing = SpreadsheetDrawing()
+            drawing._element = _et.fromstring(drawing_xml.encode('utf-8'))
+            ws._drawing = drawing
