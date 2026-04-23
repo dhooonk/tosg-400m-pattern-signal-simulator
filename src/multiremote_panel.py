@@ -33,7 +33,7 @@ class MultiRemotePanel(tk.Frame):
 
     # ──────────────────────────────────────────────────────────
     def _setup_ui(self):
-        _BTN = dict(bg='#e8e8e8', fg='#333333', relief=tk.GROOVE, borderwidth=1)
+        _BTN = dict(bg='#e8e8e8', fg='#333333', relief=tk.RAISED, borderwidth=2)
 
         # ── 상단: MRT 그룹 관리 버튼 ─────────────────────────
         top_btn = tk.Frame(self, bg='#f0f0f0')
@@ -134,6 +134,11 @@ class MultiRemotePanel(tk.Frame):
     # ──────────────────────────────────────────────────────────
     def _refresh_mrt_list(self):
         self._mrt_listbox.delete(0, tk.END)
+        # 항목 트리 및 선택 상태 항상 초기화 (Excel/OTD 새 로드 시 이전 내용 제거)
+        for row in self._entry_tree.get_children():
+            self._entry_tree.delete(row)
+        self._mrt_name_var.set('')
+        self._current_mrt_idx = -1
         for g in self.model_store.multiremote_groups:
             self._mrt_listbox.insert(tk.END, f"[{g.mrt_no}] {g.name}")
         self._refresh_model_info()
@@ -154,7 +159,7 @@ class MultiRemotePanel(tk.Frame):
             model_name = ''
             ptn_name = ''
             for m in self.model_store.models:
-                if str(m.model_num) == str(e.model_num):
+                if int(m.model_num) == int(e.model_num):
                     model_name = m.name
                     for p in m.patterns:
                         p_no = p.get('ptn_no', 0) if isinstance(p, dict) else 0
@@ -350,7 +355,7 @@ class MrtEntryDialog(tk.Toplevel):
         self._update_pattern_name()
 
         # 버튼
-        _BTN = dict(bg='#e8e8e8', fg='#333333', relief=tk.GROOVE, borderwidth=1)
+        _BTN = dict(bg='#e8e8e8', fg='#333333', relief=tk.RAISED, borderwidth=2)
         tk.Button(frm, text="확인", command=self._ok,
                   font=('Arial', 10), width=10, **_BTN).grid(row=4, column=0, pady=10)
         tk.Button(frm, text="취소", command=self.destroy,

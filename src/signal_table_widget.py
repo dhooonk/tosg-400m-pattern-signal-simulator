@@ -27,10 +27,11 @@ class SignalTableWidget(tk.Frame):
             on_edit_callback (callable): 신호 수정/추가 시 호출될 콜백 함수
         """
         super().__init__(parent, bg='#f0f0f0')
-        
+
         self.signal_manager = signal_manager
         self.on_edit_callback = on_edit_callback
-        
+        self._color_images = {}  # PhotoImage 캐시 (GC 방지)
+
         self._setup_ui()
         
         # 신호 변경 리스너 등록 (데이터 변경 시 테이블 자동 갱신)
@@ -64,37 +65,41 @@ class SignalTableWidget(tk.Frame):
         scrollbar_x = tk.Scrollbar(table_frame, orient=tk.HORIZONTAL)
         
         # Treeview (테이블) 생성
-        # Color, Visible 컬럼 추가
-        columns = ('Visible', 'Color', 'Name', 'Type', 'Mode', 'Inv', 'V1', 'V2', 'V3', 'V4', 
+        # #0(tree) 컬럼: 실제 색상 사각형 표시 / 나머지 data 컬럼
+        columns = ('Visible', 'Name', 'Type', 'Mode', 'Inv', 'V1', 'V2', 'V3', 'V4',
                   'Delay', 'Width', 'Period')
-        
+
         # 가시성을 위한 커스텀 스타일 설정
         style = ttk.Style()
-        style.configure("Custom.Treeview", 
+        style.configure("Custom.Treeview",
                        background="white",
                        foreground="black",
                        fieldbackground="white",
                        font=('Arial', 9))
         style.configure("Custom.Treeview.Heading",
                        background="#2196F3",
-                       foreground="white",
+                       foreground="black",
                        font=('Arial', 10, 'bold'))
-        
-        self.tree = ttk.Treeview(table_frame, columns=columns, show='headings',
+
+        self.tree = ttk.Treeview(table_frame, columns=columns, show='tree headings',
                                 yscrollcommand=scrollbar_y.set,
                                 xscrollcommand=scrollbar_x.set,
                                 style="Custom.Treeview")
-        
+
+        # #0 컬럼: 신호 색상 사각형 표시 (Color 인디케이터)
+        self.tree.heading('#0', text='Color')
+        self.tree.column('#0', width=40, anchor='center', stretch=False)
+
         # 행 텍스트 색상을 검정색으로 강제 설정하기 위한 태그
         self.tree.tag_configure('blacktext', foreground='black')
-        
+
         # 컬럼 너비 및 정렬 설정
         col_widths = {
-            'Visible': 50, 'Color': 50, 'Name': 100, 'Type': 60, 'Mode': 50, 'Inv': 40,
+            'Visible': 50, 'Name': 100, 'Type': 60, 'Mode': 50, 'Inv': 40,
             'V1': 60, 'V2': 60, 'V3': 60, 'V4': 60,
             'Delay': 70, 'Width': 70, 'Period': 70
         }
-        
+
         for col in columns:
             self.tree.heading(col, text=col)
             self.tree.column(col, width=col_widths.get(col, 80), anchor='center')
@@ -137,7 +142,6 @@ class SignalTableWidget(tk.Frame):
             
             values = (
                 visible_str,  # 가시성 체크박스
-                color_hex,    # 색상 hex 값 (검정 텍스트로 가독성 확보)
                 signal.name,
                 signal.sig_type,
                 signal.sig_mode,
@@ -150,12 +154,30 @@ class SignalTableWidget(tk.Frame):
                 f"{signal.width:.1f}us",
                 f"{signal.period:.1f}us"
             )
-            
-            # 모든 행 텍스트는 검정색으로 고정 (신호 색상이 배경과 유사해도 가독성 유지)
+
+            # 모든 행 텍스트는 검정색으로 고정
             tag_name = f"color_{color_hex.replace('#', '')}"
             self.tree.tag_configure(tag_name, foreground='black')
-            item_id = self.tree.insert('', tk.END, values=values, tags=(tag_name,))
+            # #0 컬럼에 실제 색상 사각형(PhotoImage) 표시
+            color_img = self._get_color_image(color_hex)
+            self.tree.insert('', tk.END, image=color_img, values=values, tags=(tag_name,))
     
+    def _get_color_image(self, color_hex: str) -> tk.PhotoImage:
+        """16×16 단색 PhotoImage 생성 및 캐시 반환"""
+        if color_hex not in self._color_images:
+            try:
+                r = int(color_hex[1:3], 16)
+                g = int(color_hex[3:5], 16)
+                b = int(color_hex[5:7], 16)
+            except (ValueError, IndexError):
+                r, g, b = 0, 0, 255
+            img = tk.PhotoImage(width=16, height=16)
+            hex_color = f'#{r:02x}{g:02x}{b:02x}'
+            row = '{' + (f'{hex_color} ' * 16).strip() + '}'
+            img.put(' '.join([row] * 16))
+            self._color_images[color_hex] = img
+        return self._color_images[color_hex]
+
     def get_selected_index(self):
         """
         선택된 항목의 인덱스 반환

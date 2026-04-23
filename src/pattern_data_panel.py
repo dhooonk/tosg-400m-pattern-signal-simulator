@@ -253,7 +253,7 @@ class PatternEditDialog(tk.Toplevel):
         # 버튼
         btn_row = type_row + 1
         _BTN = dict(bg='#e8e8e8', fg='#333333', font=('Arial', 10),
-                    relief=tk.GROOVE, borderwidth=1, width=10)
+                    relief=tk.RAISED, borderwidth=2, width=10)
         tk.Button(frm, text="확인", command=self._on_ok,     **_BTN).grid(
             row=btn_row, column=0, columnspan=2, pady=10)
         tk.Button(frm, text="취소", command=self.destroy,    **_BTN).grid(
