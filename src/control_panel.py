@@ -106,16 +106,19 @@ class ControlPanel(tk.Frame):
         # PG Data 정보 표시: SyncData / Frequency
         tk.Label(row1, text='|', bg=section_bg, fg='#bbbbbb',
                  font=('Arial', 10)).pack(side=tk.LEFT, padx=8)
+        tk.Label(row1, text='Freq:', **label_kw).pack(side=tk.LEFT)
+        self._freq_entry = tk.Entry(row1, font=('Arial', 8), width=10,
+                                    bg='#ffffff', fg='#1a1a1a',
+                                    relief=tk.SUNKEN, bd=1)
+        self._freq_entry.insert(0, '-- Hz')
+        self._freq_entry.pack(side=tk.LEFT, padx=(2, 8))
+        self._freq_entry.bind('<Return>',   self._on_freq_changed)
+        self._freq_entry.bind('<FocusOut>', self._on_freq_changed)
         tk.Label(row1, text='SyncData:', **label_kw).pack(side=tk.LEFT)
         self._sync_lbl = tk.Label(row1, text='-- us', width=12,
-                                   bg='#ffffff', fg='#1a1a1a',
+                                   bg='#d8d8d8', fg='#555555',
                                    font=('Arial', 8), relief=tk.SUNKEN, bd=1)
-        self._sync_lbl.pack(side=tk.LEFT, padx=(2, 8))
-        tk.Label(row1, text='Freq:', **label_kw).pack(side=tk.LEFT)
-        self._freq_lbl = tk.Label(row1, text='-- Hz', width=10,
-                                   bg='#ffffff', fg='#1a1a1a',
-                                   font=('Arial', 8), relief=tk.SUNKEN, bd=1)
-        self._freq_lbl.pack(side=tk.LEFT, padx=2)
+        self._sync_lbl.pack(side=tk.LEFT, padx=2)
 
         _sep()
 
@@ -182,14 +185,39 @@ class ControlPanel(tk.Frame):
                       cursor='hand2').pack(side=tk.LEFT, padx=2)
 
     def _on_model_changed(self):
-        """모델 변경 시 SyncData/Frequency 레이블 갱신"""
+        """모델 변경 시 SyncData/Frequency 갱신"""
         md = self.model_store.current_model if self.model_store else None
         if md:
+            self._freq_entry.delete(0, tk.END)
+            self._freq_entry.insert(0, f'{md.frequency_hz:.1f}')
             self._sync_lbl.config(text=f'{md.sync_data_us:.1f} us')
-            self._freq_lbl.config(text=f'{md.frequency_hz:.1f} Hz')
         else:
+            self._freq_entry.delete(0, tk.END)
+            self._freq_entry.insert(0, '--')
             self._sync_lbl.config(text='-- us')
-            self._freq_lbl.config(text='-- Hz')
+
+    def _on_freq_changed(self, event=None):
+        """Freq 입력 시 SyncData 자동 계산 및 모델 갱신"""
+        try:
+            freq = float(self._freq_entry.get())
+            if freq <= 0:
+                return
+        except (ValueError, TypeError):
+            return
+
+        sync_data_us = 1_000_000.0 / freq
+        self._sync_lbl.config(text=f'{sync_data_us:.1f} us')
+
+        md = self.model_store.current_model if self.model_store else None
+        if md:
+            md.frequency_hz = freq
+            md.sync_data_us = sync_data_us
+
+        if self.timing_viewer:
+            try:
+                self.timing_viewer.update_plot()
+            except Exception:
+                pass
 
     # ──────────────────────────────────────────────────────────────
     # 뷰 제어 핸들러

@@ -85,7 +85,7 @@ def _compute_segments(sync_data_us: float, signals: List[Dict],
       2. 각 신호의 타이밍 경계점(delay, delay+width, period 배수 등)을
          각 프레임의 offset을 더해 수집.
          - delay/width 경계: 신호가 Low↔High로 전환되는 지점
-         - period 경계: 다음 주기가 시작되는 지점
+         - period 경계: 다음 주기가 시작되는 지점 (모든 배수 추가)
          - 프레임 경계(sync_data_us, 2×sync_data_us)도 breakpoint로 추가
       3. 수집한 breakpoints를 정렬 → 인접 쌍을 구간([start, end])으로 변환
       4. 각 구간에 "Seg1", "Seg2", ... 라벨 부여 (구간 수 제한 없음)
@@ -112,11 +112,25 @@ def _compute_segments(sync_data_us: float, signals: List[Dict],
             period = float(sig.get('period', 0))
             # delay >= period인 경우 정규화 (OTD에서 delay가 period보다 클 수 있음)
             eff_delay = delay % period if period > 0 else delay
-            for bp in [eff_delay, eff_delay + width, period,
-                       period + eff_delay, period + eff_delay + width]:
-                real_bp = offset + bp
-                if 0 < real_bp < total_us:
-                    breakpoints.add(real_bp)
+            if period > 0:
+                # 프레임 내 모든 주기 배수의 경계점 추가 (period < sync_data_us 경우 포함)
+                k = 0
+                while True:
+                    base = k * period
+                    if offset + base >= total_us:
+                        break
+                    for bp in [base + eff_delay,
+                               base + eff_delay + width,
+                               (k + 1) * period]:
+                        real_bp = offset + bp
+                        if 0 < real_bp < total_us:
+                            breakpoints.add(real_bp)
+                    k += 1
+            else:
+                for bp in [eff_delay, eff_delay + width]:
+                    real_bp = offset + bp
+                    if 0 < real_bp < total_us:
+                        breakpoints.add(real_bp)
 
     sorted_bps = sorted(breakpoints)
     raw = list(zip(sorted_bps[:-1], sorted_bps[1:]))
@@ -383,14 +397,9 @@ class ExcelWaveformExporter:
 
                 prev_voltage = voltage
 
-            # timing 텍스트를 timing_row 셀에 직접 작성 (항상 표시)
-            self._draw_signal_timing(
-                ws, sig, sig_idx, segments, seg_start_cols, seg_cols,
-                total_us, center_align, solid_side
-            )
             # timing 화살표 선 도형 수집 (openpyxl drawing으로 추가)
             self._collect_timing_shapes(
-                ws.title, sig, sig_idx, seg_start_cols, seg_cols, total_us
+                ws.title, sig, sig_idx, segments, seg_start_cols, seg_cols, total_us
             )
 
     def _draw_waveform_cells(self, ws, h_row, m_row, l_row,
@@ -449,87 +458,10 @@ class ExcelWaveformExporter:
                 ws.cell(m_row, col).border = Border(left=left_m)
                 ws.cell(l_row, col).border = Border(bottom=thick, left=left_l)
 
-    def _draw_signal_timing(self, ws, sig: Dict, sig_idx: int,
-                             segments, seg_start_cols, seg_cols,
-                             sync_data_us: float,
-                             center_align, solid_side_fn):
-        """
-        각 신호의 timing 정보를 파형 윗행(timing_row)에 구분하여 표시.
-
-        표시 항목:
-          - Delay 구간 (0 → delay):        "D: Xus"  보라색, 해당 열 범위 중앙
-          - Width 구간 (delay → delay+width): "W: Xus"  파란색, 해당 열 범위 중앙
-          - Period (0 → period):            "T: Xus"  주황색, period 범위 우측
-        """
-        from openpyxl.styles import Font
-
-        timing_row = _sig_timing_row(sig_idx)
-
-        delay  = float(sig.get('delay',  0))
-        width  = float(sig.get('width',  0))
-        period = float(sig.get('period', 0))
-
-        if delay == 0 and width == 0 and period == 0:
-            return
-
-        total_cols = sum(seg_cols)
-
-        def us_to_col(us_val: float) -> int:
-            """us 값을 Excel 열 번호로 변환"""
-            ratio = us_val / sync_data_us if sync_data_us > 0 else 0
-            return COL_WAVE_START + int(ratio * total_cols)
-
-        def write_timing_label(us_start, us_end, text, color):
-            """timing_row의 지정 범위 중앙에 라벨 작성"""
-            c_start = us_to_col(us_start)
-            c_end   = max(c_start, us_to_col(us_end) - 1)
-            mid_col = (c_start + c_end) // 2
-            # 유효 열 범위 클램프
-            max_col = COL_WAVE_START + total_cols - 1
-            mid_col = max(COL_WAVE_START, min(mid_col, max_col))
-            cell = ws.cell(timing_row, mid_col)
-            cell.value     = text
-            cell.font      = Font(color=color, size=FONT_TIMING, bold=True)
-            cell.alignment = center_align
-
-        # Delay 구간 표시
-        if delay > 0:
-            write_timing_label(0, delay, f"D: {_format_us(delay)}", 'FF7030A0')
-
-        # Width 구간 표시
-        if width > 0:
-            write_timing_label(delay, delay + width, f"W: {_format_us(width)}", 'FF0070C0')
-
-        # Period 표시 (delay+width 이후의 나머지 범위 우측)
-        if period > 0:
-            # period 전체 범위 표시 (겹치지 않도록 period 우측에 배치)
-            p_col_end = us_to_col(period) - 1
-            max_col   = COL_WAVE_START + total_cols - 1
-            p_col_end = max(COL_WAVE_START, min(p_col_end, max_col))
-            cell = ws.cell(timing_row, p_col_end)
-            if cell.value is None:
-                cell.value     = f"T: {_format_us(period)}"
-                cell.font      = Font(color='FFCC5500', size=FONT_TIMING, bold=True)
-                cell.alignment = center_align
-
-    def _us_range_to_cols(self, us_start: float, us_end: float,
-                           sync_data_us: float,
-                           segments, seg_start_cols, seg_cols
-                           ) -> Optional[Tuple[int, int]]:
-        """us 시간 범위를 Excel 열 범위로 변환"""
-        if us_end <= us_start or sync_data_us <= 0:
-            return None
-        total_cols = sum(seg_cols)
-        c_start = COL_WAVE_START + int(us_start / sync_data_us * total_cols)
-        c_end   = COL_WAVE_START + int(us_end   / sync_data_us * total_cols) - 1
-        if c_start > c_end:
-            c_end = c_start
-        return c_start, c_end
-
     # ── 타이밍 화살표 도형 ───────────────────────────────────────────
 
     def _collect_timing_shapes(self, sheet_title: str, sig: Dict, sig_idx: int,
-                                seg_start_cols, seg_cols,
+                                segments, seg_start_cols, seg_cols,
                                 sync_data_us: float) -> None:
         """
         타이밍 구간별 선 화살표 + 텍스트 상자 도형 XML을 수집.
@@ -552,18 +484,24 @@ class ExcelWaveformExporter:
         total_cols   = sum(seg_cols)
 
         def us_to_col_0(us_val: float) -> int:
-            ratio = us_val / sync_data_us if sync_data_us > 0 else 0
-            return (COL_WAVE_START - 1) + int(ratio * total_cols)  # 0-based
+            # 세그먼트 경계 기반 열 계산 (반올림 오차 없이 정확한 경계 스냅)
+            for i, (s, e, _) in enumerate(segments):
+                if abs(s - us_val) < 1e-6:
+                    return seg_start_cols[i] - 1  # 0-based
+                if s < us_val < e:
+                    frac = (us_val - s) / (e - s)
+                    return seg_start_cols[i] - 1 + int(frac * seg_cols[i])
+            return seg_start_cols[-1] + seg_cols[-1] - 1  # 마지막 경계 (0-based)
 
         intervals = []
         if eff_delay > 0:
-            intervals.append((0.0, eff_delay,           '7030A0', _format_us(eff_delay)))
+            intervals.append((0.0, eff_delay, '7030A0', f"D: {_format_us(eff_delay)}"))
         if width > 0:
-            intervals.append((eff_delay, eff_delay + width, '0070C0', _format_us(width)))
+            intervals.append((eff_delay, eff_delay + width, '0070C0', f"W: {_format_us(width)}"))
         if period > 0:
             rest = period - eff_delay - width
             if rest > 0:
-                intervals.append((eff_delay + width, period, 'CC5500', _format_us(rest)))
+                intervals.append((eff_delay + width, period, 'CC5500', f"P: {_format_us(period)}"))
 
         if not intervals:
             return
@@ -590,7 +528,7 @@ class ExcelWaveformExporter:
                 f'<xdr:from><xdr:col>{c0}</xdr:col><xdr:colOff>0</xdr:colOff>'
                 f'<xdr:row>{timing_row_0}</xdr:row><xdr:rowOff>{HALF_ROW_EMU}</xdr:rowOff></xdr:from>'
                 f'<xdr:to><xdr:col>{c1}</xdr:col><xdr:colOff>0</xdr:colOff>'
-                f'<xdr:row>{timing_row_0 + 1}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to>'
+                f'<xdr:row>{timing_row_0}</xdr:row><xdr:rowOff>{HALF_ROW_EMU + 1}</xdr:rowOff></xdr:to>'
                 f'<xdr:cxnSp macro="">'
                 f'<xdr:nvCxnSpPr>'
                 f'<xdr:cNvPr id="{sid}" name="Line{sid}"/>'
